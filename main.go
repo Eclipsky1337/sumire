@@ -221,6 +221,35 @@ func newHandler(target *url.URL, assets fs.FS, supervisor *coreSupervisor) http.
 		}
 		writeWebJSON(writer, http.StatusOK, map[string]any{"result": supervisor.Status()})
 	})
+	mux.HandleFunc("/webui/routing", func(writer http.ResponseWriter, request *http.Request) {
+		if request.Method != http.MethodPut {
+			methodNotAllowed(writer, http.MethodPut)
+			return
+		}
+		if supervisor == nil {
+			writeWebError(writer, http.StatusConflict, "CORE_NOT_MANAGED", "Core is not managed by WebUI")
+			return
+		}
+		var params struct {
+			Mode string `json:"mode"`
+		}
+		request.Body = http.MaxBytesReader(writer, request.Body, 4<<20)
+		decoder := json.NewDecoder(request.Body)
+		decoder.DisallowUnknownFields()
+		if err := decoder.Decode(&params); err != nil {
+			writeWebError(writer, http.StatusBadRequest, "CONFIG_INVALID", err.Error())
+			return
+		}
+		status, headers, responseBody, err := supervisor.UpdateRoutingMode(request.Context(), request.Header.Get("Authorization"), params.Mode)
+		if err != nil {
+			if status == 0 {
+				status = http.StatusInternalServerError
+			}
+			writeWebError(writer, status, "CONFIG_APPLY_FAILED", err.Error())
+			return
+		}
+		writeUpstreamResponse(writer, status, headers, responseBody)
+	})
 	mux.HandleFunc("/webui/logs", func(writer http.ResponseWriter, request *http.Request) {
 		if request.Method != http.MethodGet {
 			methodNotAllowed(writer, http.MethodGet)

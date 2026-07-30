@@ -234,17 +234,22 @@ func TestNormalizeJSONConfigForManagedCore(t *testing.T) {
 
 func TestApplyConfigPersistsAfterCoreSuccess(t *testing.T) {
 	originalTransport := http.DefaultTransport
+	requests := 0
 	http.DefaultTransport = roundTripFunc(func(request *http.Request) (*http.Response, error) {
-		if request.Method != http.MethodPut || request.URL.Path != "/api/v1/config" {
-			t.Fatalf("upstream request = %s %s", request.Method, request.URL.Path)
-		}
+		requests++
 		if request.Header.Get("Authorization") != "Bearer managed-token" {
 			t.Fatalf("Authorization = %q", request.Header.Get("Authorization"))
+		}
+		if requests == 1 && (request.Method != http.MethodPut || request.URL.Path != "/api/v1/config") {
+			t.Fatalf("validation request = %s %s", request.Method, request.URL.Path)
+		}
+		if requests == 2 && (request.Method != http.MethodPost || request.URL.Path != "/api/v1/config/reload") {
+			t.Fatalf("reload request = %s %s", request.Method, request.URL.Path)
 		}
 		return &http.Response{
 			StatusCode: http.StatusOK,
 			Header:     http.Header{"Content-Type": []string{"application/json"}},
-			Body:       io.NopCloser(strings.NewReader(`{"result":{"config":{}}}`)),
+			Body:       io.NopCloser(strings.NewReader(`{"result":{"revision":2,"configured":{},"active":{},"active_revision":1,"pending":[]}}`)),
 			Request:    request,
 		}, nil
 	})
@@ -269,6 +274,85 @@ func TestApplyConfigPersistsAfterCoreSuccess(t *testing.T) {
 		t.Fatal(err)
 	}
 	assertManagedConfig(t, config, supervisor.resumeFile, supervisor.tokenFile)
+}
+
+func TestUpdateRoutingModePersistsAndReloads(t *testing.T) {
+	originalTransport := http.DefaultTransport
+	http.DefaultTransport = roundTripFunc(func(request *http.Request) (*http.Response, error) {
+		if request.Method != http.MethodPost || request.URL.Path != "/api/v1/config/reload" {
+			t.Fatalf("reload request = %s %s", request.Method, request.URL.Path)
+		}
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     http.Header{"Content-Type": []string{"application/json"}},
+			Body:       io.NopCloser(strings.NewReader(`{"result":{"revision":2,"configured":{"routing":{"mode":"global"}},"active":{"routing":{"mode":"global"}},"active_revision":2,"pending":[]}}`)),
+			Request:    request,
+		}, nil
+	})
+	defer func() { http.DefaultTransport = originalTransport }()
+
+	directory := t.TempDir()
+	target, _ := url.Parse("http://core.invalid")
+	supervisor := newCoreSupervisor("unused", filepath.Join(directory, "config.yaml"), filepath.Join(directory, "resume.json"), filepath.Join(directory, "control.token"), "127.0.0.1:9090", target)
+	if err := supervisor.Prepare(); err != nil {
+		t.Fatal(err)
+	}
+	status, _, _, err := supervisor.UpdateRoutingMode(context.Background(), "Bearer managed-token", "global")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if status != http.StatusOK {
+		t.Fatalf("status = %d", status)
+	}
+	persisted, err := os.ReadFile(supervisor.configFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(persisted), "mode: global") {
+		t.Fatalf("persisted config = %s", persisted)
+	}
+}
+
+func TestUpdateRoutingModeRollsBackFileWhenReloadFails(t *testing.T) {
+	originalTransport := http.DefaultTransport
+	requests := 0
+	http.DefaultTransport = roundTripFunc(func(request *http.Request) (*http.Response, error) {
+		requests++
+		status := http.StatusBadRequest
+		body := `{"error":{"code":"CONFIG_INVALID","message":"invalid config","retryable":false}}`
+		if requests == 2 {
+			status = http.StatusOK
+			body = `{"result":{"revision":1,"configured":{},"active":{},"active_revision":1,"pending":[]}}`
+		}
+		return &http.Response{
+			StatusCode: status,
+			Header:     http.Header{"Content-Type": []string{"application/json"}},
+			Body:       io.NopCloser(strings.NewReader(body)),
+			Request:    request,
+		}, nil
+	})
+	defer func() { http.DefaultTransport = originalTransport }()
+
+	directory := t.TempDir()
+	target, _ := url.Parse("http://core.invalid")
+	supervisor := newCoreSupervisor("unused", filepath.Join(directory, "config.yaml"), filepath.Join(directory, "resume.json"), filepath.Join(directory, "control.token"), "127.0.0.1:9090", target)
+	if err := supervisor.Prepare(); err != nil {
+		t.Fatal(err)
+	}
+	status, _, _, err := supervisor.UpdateRoutingMode(context.Background(), "Bearer managed-token", "global")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if status != http.StatusBadRequest {
+		t.Fatalf("status = %d", status)
+	}
+	persisted, err := os.ReadFile(supervisor.configFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(persisted), "mode: rule") || strings.Contains(string(persisted), "mode: global") {
+		t.Fatalf("configuration was not rolled back: %s", persisted)
+	}
 }
 
 func TestPrepareUsesEmbeddedInitialConfiguration(t *testing.T) {

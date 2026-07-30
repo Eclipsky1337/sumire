@@ -212,19 +212,7 @@ func (supervisor *coreSupervisor) ApplyConfig(ctx context.Context, authorization
 	if err != nil {
 		return http.StatusBadRequest, nil, nil, err
 	}
-	status, headers, responseBody, err := supervisor.applyCoreConfig(ctx, authorization, normalizedJSON)
-	if err != nil {
-		return 0, nil, nil, err
-	}
-	if status >= 200 && status < 300 || coreErrorCode(responseBody) == "RESTART_REQUIRED" {
-		if err := atomicWriteFile(supervisor.configFile, normalizedYAML, managedFileMode); err != nil {
-			return 0, nil, nil, fmt.Errorf("configuration applied but persistence failed: %w", err)
-		}
-	}
-	if coreErrorCode(responseBody) == "RESTART_REQUIRED" {
-		return supervisor.reloadCoreConfig(ctx, authorization)
-	}
-	return status, headers, responseBody, nil
+	return supervisor.applyNormalizedConfig(ctx, authorization, normalizedJSON, normalizedYAML)
 }
 
 func (supervisor *coreSupervisor) ApplyYAMLConfig(ctx context.Context, authorization string, body []byte) (int, http.Header, []byte, error) {
@@ -242,19 +230,84 @@ func (supervisor *coreSupervisor) ApplyYAMLConfig(ctx context.Context, authoriza
 	if err != nil {
 		return http.StatusBadRequest, nil, nil, fmt.Errorf("encode configuration JSON: %w", err)
 	}
+	return supervisor.applyNormalizedConfig(ctx, authorization, normalizedJSON, normalizedYAML)
+}
+
+func (supervisor *coreSupervisor) UpdateRoutingMode(ctx context.Context, authorization, mode string) (int, http.Header, []byte, error) {
+	if mode != "rule" && mode != "global" && mode != "direct" {
+		return http.StatusBadRequest, nil, nil, fmt.Errorf("invalid routing mode %q", mode)
+	}
+	supervisor.applyMu.Lock()
+	defer supervisor.applyMu.Unlock()
+	data, err := os.ReadFile(supervisor.configFile)
+	if err != nil {
+		return 0, nil, nil, fmt.Errorf("read managed configuration: %w", err)
+	}
+	normalizedYAML, err := normalizeYAMLConfig(data, supervisor.resumeFile, supervisor.tokenFile, supervisor.coreListen)
+	if err != nil {
+		return http.StatusBadRequest, nil, nil, err
+	}
+	var document yaml.Node
+	if err := yaml.Unmarshal(normalizedYAML, &document); err != nil {
+		return http.StatusBadRequest, nil, nil, fmt.Errorf("decode managed configuration: %w", err)
+	}
+	if err := setYAMLScalar(&document, []string{"routing", "mode"}, mode, "!!str"); err != nil {
+		return http.StatusBadRequest, nil, nil, err
+	}
+	updatedYAML, err := yaml.Marshal(&document)
+	if err != nil {
+		return http.StatusBadRequest, nil, nil, fmt.Errorf("encode managed configuration: %w", err)
+	}
+	return supervisor.persistAndReload(ctx, authorization, updatedYAML)
+}
+
+func (supervisor *coreSupervisor) applyNormalizedConfig(ctx context.Context, authorization string, normalizedJSON, normalizedYAML []byte) (int, http.Header, []byte, error) {
 	status, headers, responseBody, err := supervisor.applyCoreConfig(ctx, authorization, normalizedJSON)
 	if err != nil {
 		return 0, nil, nil, err
 	}
-	if status >= 200 && status < 300 || coreErrorCode(responseBody) == "RESTART_REQUIRED" {
-		if err := atomicWriteFile(supervisor.configFile, normalizedYAML, managedFileMode); err != nil {
-			return 0, nil, nil, fmt.Errorf("configuration applied but persistence failed: %w", err)
-		}
+	if (status < 200 || status >= 300) && coreErrorCode(responseBody) != "RESTART_REQUIRED" {
+		return status, headers, responseBody, nil
 	}
-	if coreErrorCode(responseBody) == "RESTART_REQUIRED" {
-		return supervisor.reloadCoreConfig(ctx, authorization)
+	return supervisor.persistAndReload(ctx, authorization, normalizedYAML)
+}
+
+func (supervisor *coreSupervisor) persistAndReload(ctx context.Context, authorization string, normalizedYAML []byte) (int, http.Header, []byte, error) {
+	previous, err := os.ReadFile(supervisor.configFile)
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return 0, nil, nil, fmt.Errorf("read previous managed configuration: %w", err)
+	}
+	if err := atomicWriteFile(supervisor.configFile, normalizedYAML, managedFileMode); err != nil {
+		if len(previous) != 0 {
+			_, _, _, _ = supervisor.reloadCoreConfig(ctx, authorization)
+		}
+		return 0, nil, nil, fmt.Errorf("persist managed configuration: %w", err)
+	}
+	status, headers, responseBody, reloadErr := supervisor.reloadCoreConfig(ctx, authorization)
+	if reloadErr == nil && status >= 200 && status < 300 {
+		return status, headers, responseBody, nil
+	}
+	rollbackErr := restoreManagedConfig(supervisor.configFile, previous)
+	if rollbackErr == nil && len(previous) != 0 {
+		_, _, _, rollbackErr = supervisor.reloadCoreConfig(ctx, authorization)
+	}
+	if reloadErr != nil {
+		return 0, nil, nil, errors.Join(reloadErr, rollbackErr)
+	}
+	if rollbackErr != nil {
+		return 0, nil, nil, fmt.Errorf("reload managed configuration failed with status %d; rollback failed: %w", status, rollbackErr)
 	}
 	return status, headers, responseBody, nil
+}
+
+func restoreManagedConfig(path string, previous []byte) error {
+	if len(previous) == 0 {
+		if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return err
+		}
+		return nil
+	}
+	return atomicWriteFile(path, previous, managedFileMode)
 }
 
 func (supervisor *coreSupervisor) applyCoreConfig(ctx context.Context, authorization string, normalizedJSON []byte) (int, http.Header, []byte, error) {
