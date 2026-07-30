@@ -1,0 +1,132 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    name: Build and publish
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Check out Sumire
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          fetch-depth: 0
+
+      - name: Resolve Core release
+        id: core-release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          core_tag="$(gh api 'repos/Eclipsky1337/zju-portal-core/releases?per_page=1' --jq '.[0].tag_name')"
+          if [[ -z "$core_tag" || "$core_tag" == "null" ]]; then
+            echo "No published zju-portal-core release found" >&2
+            exit 1
+          fi
+          echo "tag=$core_tag" >> "$GITHUB_OUTPUT"
+
+      - name: Check out Core
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          repository: Eclipsky1337/zju-portal-core
+          ref: ${{ steps.core-release.outputs.tag }}
+          path: core
+
+      - name: Set up Go
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+        with:
+          go-version: "1.25.6"
+          cache-dependency-path: |
+            go.sum
+            core/go.sum
+
+      - name: Run Sumire tests
+        run: go test ./...
+
+      - name: Build release archives
+        shell: bash
+        env:
+          CORE_VERSION: ${{ steps.core-release.outputs.tag }}
+        run: |
+          set -euo pipefail
+
+          mkdir -p dist
+          core_commit="$(git -C core rev-parse --short=7 HEAD)"
+
+          build_target() {
+            local goos="$1"
+            local goarch="$2"
+            local extension="$3"
+            local package_name="sumire_${GITHUB_REF_NAME}_${goos}_${goarch}"
+            local package_dir="dist/${package_name}"
+
+            mkdir -p "$package_dir"
+            CGO_ENABLED=0 GOOS="$goos" GOARCH="$goarch" go build \
+              -trimpath \
+              -ldflags="-s -w" \
+              -o "${package_dir}/sumire${extension}" \
+              .
+            (
+              cd core
+              CGO_ENABLED=0 GOOS="$goos" GOARCH="$goarch" go build \
+                -trimpath \
+                -ldflags="-s -w -X main.CommitID=${core_commit}" \
+                -o "../${package_dir}/zju-portal-core${extension}" \
+                .
+            )
+
+            cp README.md "$package_dir/"
+            cp core/LICENSE "$package_dir/LICENSE.zju-portal-core"
+            printf 'Sumire: %s\nzju-portal-core: %s (%s)\n' \
+              "$GITHUB_REF_NAME" "$CORE_VERSION" "$core_commit" > "${package_dir}/VERSIONS.txt"
+
+            if [[ "$goos" == "windows" ]]; then
+              (cd dist && zip -qr "${package_name}.zip" "$package_name")
+            else
+              tar -C dist -czf "dist/${package_name}.tar.gz" "$package_name"
+            fi
+            rm -rf "$package_dir"
+          }
+
+          build_target darwin amd64 ""
+          build_target darwin arm64 ""
+          build_target linux amd64 ""
+          build_target linux arm64 ""
+          build_target windows amd64 ".exe"
+          build_target windows arm64 ".exe"
+
+          cd dist
+          sha256sum ./*.tar.gz ./*.zip > checksums.txt
+
+      - name: Publish GitHub Release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CORE_VERSION: ${{ steps.core-release.outputs.tag }}
+        run: |
+          set -euo pipefail
+
+          release_args=(
+            --verify-tag
+            --title "Sumire ${GITHUB_REF_NAME}"
+            --generate-notes
+            --notes "Bundled zju-portal-core ${CORE_VERSION}."
+          )
+          if [[ "$GITHUB_REF_NAME" == *-* ]]; then
+            release_args+=(--prerelease)
+          fi
+
+          gh release create "$GITHUB_REF_NAME" "${release_args[@]}" dist/*
+

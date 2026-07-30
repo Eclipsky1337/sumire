@@ -2,6 +2,11 @@
 
 <h3 align="center">面向 ZJU 网络访问的轻量客户端</h3>
 
+<p align="center">
+  <a href="https://github.com/Eclipsky1337/sumire/actions/workflows/ci.yml"><img src="https://github.com/Eclipsky1337/sumire/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+  <a href="https://github.com/Eclipsky1337/sumire/releases"><img src="https://img.shields.io/github/v/release/Eclipsky1337/sumire?include_prereleases" alt="Release"></a>
+</p>
+
 ## Features
 
 - REST Token 连接与协议版本检查；
@@ -34,6 +39,8 @@ sumire/
 ```
 
 WebUI 会自动发现同目录的 `zju-portal-core`（Windows 为 `zju-portal-core.exe`），Core 随 WebUI 自动启动并在异常退出后自动重启。托管数据默认保存在 WebUI 同目录的 `data` 文件夹。
+
+每个 Sumire Release 会自动打包发布时最新的 `zju-portal-core` Release，并在压缩包的 `VERSIONS.txt` 中记录两个组件的版本。
 
 托管模式默认使用：
 
