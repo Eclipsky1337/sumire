@@ -1,0 +1,184 @@
+version: 1
+
+log:
+  # 日志级别 info/debug
+  level: info
+
+  # 日志输出位置 stderr 表示标准错误，也可以填写日志文件路径
+  output: stderr
+
+control:
+  stdio:
+    # 是否启用基于标准输入输出的 JSONL Control API
+    enabled: false
+
+  rest:
+    # 是否启用 REST Control API 和 SSE 事件流
+    enabled: true
+
+    # REST 监听地址
+    listen: 127.0.0.1:9090
+
+    # REST Bearer Token 留空且 secret-file 也为空时，启动时自动生成随机 Token
+    # secret 和 secret-file 互斥
+    secret: ""
+
+    # 从文件读取 REST Token
+    secret-file: ""
+
+session:
+  # Session 标识
+  id: default
+
+  # 启动 Core 时是否自动建立 aTrust Session
+  auto-start: false
+
+  # VPN 网络后端异常时是否自动重连
+  auto-reconnect: true
+
+state:
+  # Resume State 持久化文件 留空表示不持久化
+  resume-file: ""
+
+atrust:
+  # aTrust 网关域名或 IP session.auto-start 为 true 时不能为空
+  server: vpn.zju.edu.cn
+
+  # aTrust 网关端口
+  port: 443
+
+  # 登录账号
+  username: ""
+
+  # 登录密码
+  password: ""
+
+  # 手机号 auth/smsCheckCode 认证时必填
+  phone: ""
+
+  # 认证类型
+  #   auth/psw           用户名密码
+  #   auth/cas           CAS
+  #   auth/httpsOauth2   OAuth2
+  #   auth/smsCheckCode  短信验证码
+  auth-type: auth/psw
+
+  # aTrust 登录域
+  login-domain: Radius
+
+  # 后台重新探测各节点延迟并更新最佳节点的周期
+  # 设为 0s 可关闭周期更新，不能为负数
+  update-best-nodes-interval: 30s
+
+underlay:
+  # VPN 服务端、节点和上游 DNS 连接使用的物理出口接口
+  # 留空时由 auto-detect 自动选择
+  interface: ""
+
+  # 是否自动检测默认物理出口，并在接口变化或拨号失败后重新检测
+  auto-detect: true
+
+routing:
+  # 运行时路由模式
+  # rule    规则模式，内网资源走 VPN，其他流量按 internet-outbound 出口
+  # direct  直连模式，所有流量走物理出口
+  # global  全局模式，所有流量走 VPN
+  mode: rule
+
+  internet-outbound:
+    # rule 模式下，未匹配 VPN 资源的流量出口 direct/socks5/reject
+    type: direct
+
+    # type 为 socks5 时必填
+    address: ""
+
+    # 上游 SOCKS5 用户名
+    username: ""
+
+    # 上游 SOCKS5 密码
+    password: ""
+
+dns:
+  remote:
+    # 是否优先使用 VPN 内远程 DNS 解析
+    enabled: true
+
+    # VPN 远程 DNS 地址 auto 表示从 aTrust 资源中读取服务端 DNS
+    server: auto
+
+  secondary:
+    # 远程 DNS 失败或被关闭时使用的备用 DNS IPv4 地址
+    server: ""
+
+  # DNS 缓存有效期
+  cache-ttl: 1h
+
+  # 独立 DNS 服务监听地址
+  listen: ""
+
+  # 强制静态解析记录，优先级高于远程和备用 DNS
+  # 最多 4096 条；目标必须是合法 IPv4 或 IPv6 地址
+  # 示例：hosts: {internal.example: 10.0.0.10}
+  hosts: {}
+
+inbounds:
+  socks5:
+    # 是否启动 SOCKS5 入站代理
+    enabled: true
+
+    # SOCKS5 监听地址
+    listen: 127.0.0.1:1080
+
+    # SOCKS5 用户名
+    username: ""
+
+    # SOCKS5 密码
+    password: ""
+
+  http:
+    # 是否启动 HTTP CONNECT 入站代理
+    enabled: true
+
+    # HTTP 代理监听地址
+    listen: 127.0.0.1:1081
+
+  tun:
+    # 是否创建系统 TUN 设备
+    enabled: false
+
+    # TUN 接口显示名称
+    name: ZJU-Portal
+
+    # TUN IPv4 地址和前缀
+    address: 172.19.0.1/30
+
+    # TUN MTU
+    mtu: 1400
+
+    # 是否自动安装系统路由
+    auto-route: true
+
+    # 是否由 TUN 接管全部 IPv4 流量
+    route-all: false
+
+    # TUN 公网直连、备用 DNS 和 VPN 底层连接使用的物理出口接口；留空时自动检测
+    outbound-interface: ""
+
+    udp:
+      # UDP flow 长时间无活动后的回收时间
+      idle-timeout: 60s
+
+      # 同时维护的 UDP flow 上限
+      max-flows: 512
+
+    dns:
+      # 是否把系统 DNS 指向 TUN 对端
+      # 必须同时开启 auto-route
+      hijack: true
+
+      # 是否为 VPN 域名和解析到 VPN 资源的域名分配 Fake IP
+      # 开启后会自动启用 hijack，并要求 auto-route
+      fake-ip: true
+
+      # Fake IP 地址池
+      fake-ip-range: 198.18.0.0/16

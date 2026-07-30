@@ -1,0 +1,185 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="color-scheme" content="dark">
+  <title>Sumire</title>
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <div class="shell">
+    <aside class="sidebar">
+      <div class="brand">
+        <div class="brand-mark">S</div>
+        <div><strong>Sumire</strong><span>ZJU Network Access</span></div>
+      </div>
+      <nav>
+        <button class="nav-item active" data-view="overview">概览</button>
+        <button class="nav-item" data-view="config">配置</button>
+        <button class="nav-item" data-view="connections">连接</button>
+        <button class="nav-item" data-view="events">事件</button>
+        <button id="coreLogsNav" class="nav-item" data-view="logs" hidden>Core 日志</button>
+      </nav>
+      <div class="sidebar-footer">
+        <span id="connectionDot" class="dot"></span>
+        <span id="connectionText">未连接 Core</span>
+      </div>
+    </aside>
+
+    <main>
+      <header class="topbar">
+        <div>
+          <p class="eyebrow">ZJU NETWORK ACCESS</p>
+          <h1 id="pageTitle">运行概览</h1>
+        </div>
+        <div class="top-actions">
+          <span id="coreVersion" class="muted">等待连接</span>
+          <button id="connectButton" class="button secondary">连接设置</button>
+        </div>
+      </header>
+
+      <section id="overviewView" class="view active">
+        <div class="status-panel">
+          <div>
+            <span class="label">SESSION STATUS</span>
+            <div class="status-line"><span id="sessionPulse" class="pulse"></span><strong id="sessionState">未连接</strong></div>
+            <p id="sessionHint">连接 Core 后显示当前会话状态。</p>
+          </div>
+          <div class="session-actions">
+            <select id="routingMode" aria-label="路由模式">
+              <option value="rule">规则模式</option>
+              <option value="global">全局模式</option>
+              <option value="direct">直连模式</option>
+            </select>
+            <button id="sessionToggle" class="session-toggle" type="button" role="switch" aria-checked="false">
+              <span class="session-toggle-track"><span class="session-toggle-knob"></span></span>
+              <span id="sessionToggleLabel">启动会话</span>
+            </button>
+          </div>
+        </div>
+
+        <div class="traffic-grid">
+          <article class="card speed-card">
+            <div class="card-heading">
+              <div><span class="label">NETWORK SPEED</span><h2>网络速度</h2></div>
+              <div class="speed-summary">
+                <div class="speed-legends">
+                  <div class="speed-legend download"><span>下载</span><strong id="downloadRate">0 B/s</strong></div>
+                  <div class="speed-legend upload"><span>上传</span><strong id="uploadRate">0 B/s</strong></div>
+                </div>
+                <button id="activeConnectionsButton" class="connection-count" type="button" title="查看活动连接">
+                  <span>活动连接</span><strong id="activeConnections">—</strong>
+                </button>
+              </div>
+            </div>
+            <div class="speed-chart-wrap"><canvas id="speedChart" aria-label="实时上下行速率曲线"></canvas></div>
+          </article>
+          <div class="traffic-side">
+            <article class="card total-traffic-card">
+              <div><span class="label">TOTAL TRAFFIC</span><h2>总流量</h2></div>
+              <div class="traffic-donut-wrap">
+                <canvas id="trafficDonut" aria-label="上下行总流量占比"></canvas>
+                <div class="traffic-donut-center"><strong id="totalTraffic">—</strong><span>累计流量</span></div>
+              </div>
+              <div class="traffic-totals">
+                <div><span class="traffic-dot download"></span><span>下载</span><strong id="downloaded">—</strong></div>
+                <div><span class="traffic-dot upload"></span><span>上传</span><strong id="uploaded">—</strong></div>
+              </div>
+            </article>
+          </div>
+        </div>
+
+        <div class="grid two">
+          <article class="card">
+            <div class="card-heading"><div><span class="label">SERVICES</span><h2>本地服务</h2></div><button id="refreshButton" class="icon-button" title="刷新">↻</button></div>
+            <div id="servicesList" class="service-list empty">暂无服务信息</div>
+          </article>
+          <article class="card">
+            <div class="card-heading"><div><span class="label">SESSION</span><h2>连接信息</h2></div></div>
+            <dl class="details">
+              <div><dt>会话 ID</dt><dd id="sessionId">—</dd></div>
+              <div><dt>服务器</dt><dd id="serverAddress">—</dd></div>
+              <div><dt>用户名</dt><dd id="username">—</dd></div>
+              <div><dt>运行时间</dt><dd id="uptime">—</dd></div>
+            </dl>
+          </article>
+        </div>
+      </section>
+
+      <section id="configView" class="view">
+        <article class="card config-card">
+          <div class="card-heading">
+            <div><span class="label">DAEMON CONFIG</span><h2 id="configTitle">完整配置</h2></div>
+            <div class="row-actions"><button id="reloadConfigButton" class="button secondary">从文件重载</button><button id="saveConfigButton" class="button primary">应用配置</button></div>
+          </div>
+          <textarea id="configEditor" spellcheck="false" aria-label="JSON 配置"></textarea>
+        </article>
+      </section>
+
+      <section id="connectionsView" class="view">
+        <article class="card">
+          <div class="card-heading"><div><span class="label">CONNECTIONS</span><h2>逻辑连接</h2></div><button id="refreshConnectionsButton" class="button secondary">刷新</button></div>
+          <div id="connectionsList" class="connection-grid"></div>
+          <div id="connectionsEmpty" class="empty">暂无活动连接</div>
+        </article>
+      </section>
+
+      <section id="eventsView" class="view">
+        <article class="card">
+          <div class="card-heading"><div><span class="label">LIVE EVENTS</span><h2>实时事件</h2></div><button id="clearEventsButton" class="button secondary">清空</button></div>
+          <div id="eventLog" class="event-log empty">尚未收到事件</div>
+        </article>
+      </section>
+
+      <section id="logsView" class="view">
+        <article class="card">
+          <div class="card-heading"><div><span class="label">CORE OUTPUT</span><h2>Core 日志</h2></div><button id="clearCoreLogsButton" class="button secondary">清空显示</button></div>
+          <div id="coreLogViewer" class="core-log-viewer empty">暂无 Core 日志</div>
+        </article>
+      </section>
+    </main>
+  </div>
+
+  <dialog id="connectDialog">
+    <form id="connectForm" method="dialog">
+      <div class="dialog-heading"><div><span class="label">CORE ACCESS</span><h2>连接设置</h2></div><button class="close-button" value="cancel" aria-label="关闭">×</button></div>
+      <label>REST Token<input id="tokenInput" type="password" autocomplete="off" placeholder="Bearer Token"></label>
+      <label class="checkbox"><input id="rememberToken" type="checkbox"><span>在此浏览器中记住 Token</span></label>
+      <p class="form-note">WebUI 已通过同源代理连接 <code>/api/v1</code>，Token 仅保存在当前浏览器。</p>
+      <div class="dialog-actions"><button class="button secondary" value="cancel">取消</button><button id="submitConnect" class="button primary" value="default">连接</button></div>
+    </form>
+  </dialog>
+
+  <dialog id="authDialog">
+    <form id="authForm" method="dialog">
+      <div class="dialog-heading"><div><span class="label">AUTHENTICATION</span><h2 id="authTitle">需要认证</h2></div></div>
+      <p id="authPrompt" class="auth-prompt"></p>
+      <div id="authImageStage" class="auth-image-stage">
+        <img id="authImage" class="auth-image" alt="认证图片">
+        <svg id="authMarkers" class="auth-markers" aria-hidden="true"></svg>
+      </div>
+      <div id="graphClickPanel" class="graph-click-panel" hidden>
+        <div class="graph-click-toolbar">
+          <div><button id="undoGraphClickButton" type="button" class="text-button">撤销上一步</button><button id="clearGraphClicksButton" type="button" class="text-button">清空</button></div>
+        </div>
+      </div>
+      <a id="authLink" class="auth-link" target="_blank" rel="noreferrer">在浏览器中打开认证页面</a>
+      <div id="authChoices" class="auth-choices"></div>
+      <label id="authValueLabel">认证信息<input id="authValue" autocomplete="one-time-code"></label>
+      <div class="dialog-actions"><button id="skipAuthButton" type="button" class="button secondary">跳过</button><button id="submitAuthButton" class="button primary" value="default">提交</button></div>
+    </form>
+  </dialog>
+
+  <dialog id="connectionDialog">
+    <div class="connection-dialog-content">
+      <div class="dialog-heading"><div><span class="label">CONNECTION DETAIL</span><h2 id="connectionDialogTitle">连接详情</h2></div><button id="closeConnectionDialogButton" type="button" class="close-button" aria-label="关闭">×</button></div>
+      <dl id="connectionDetails" class="connection-details"></dl>
+      <div class="dialog-actions"><button id="closeSelectedConnectionButton" type="button" class="button danger">关闭此连接</button><button id="dismissConnectionDialogButton" type="button" class="button secondary">返回</button></div>
+    </div>
+  </dialog>
+
+  <div id="toastContainer" class="toasts" aria-live="polite"></div>
+  <script src="/app.js" defer></script>
+</body>
+</html>
