@@ -1,10 +1,12 @@
 const API = "/api/v1";
+const PROTOCOL_VERSION = 2;
 const TOKEN_KEY = "sumireToken";
 const LEGACY_TOKEN_KEY = "zjuPortalToken";
 
 const state = {
   token: localStorage.getItem(TOKEN_KEY) || sessionStorage.getItem(TOKEN_KEY) || localStorage.getItem(LEGACY_TOKEN_KEY) || sessionStorage.getItem(LEGACY_TOKEN_KEY) || "",
   config: null,
+  configSnapshot: null,
   sessionId: "default",
   eventSource: null,
   traffic: null,
@@ -48,6 +50,8 @@ elements.clearEventsButton.addEventListener("click", () => { elements.eventLog.i
 elements.clearCoreLogsButton.addEventListener("click", () => { elements.coreLogViewer.innerHTML = "暂无 Core 日志"; elements.coreLogViewer.classList.add("empty"); });
 elements.saveConfigButton.addEventListener("click", saveConfig);
 elements.reloadConfigButton.addEventListener("click", reloadConfig);
+elements.applySessionConfigButton.addEventListener("click", applySessionConfig);
+elements.restartCoreButton.addEventListener("click", restartManagedCore);
 elements.sessionToggle.addEventListener("click", toggleSession);
 elements.routingMode.addEventListener("change", changeRoutingMode);
 elements.authForm.addEventListener("submit", event => { event.preventDefault(); submitAuth(); });
@@ -175,7 +179,7 @@ async function connect(silent = false) {
   state.token = token;
   try {
     const hello = await api("/hello");
-    if (hello.protocol_version !== 1) throw new Error(`不支持控制协议版本 ${hello.protocol_version}`);
+    if (hello.protocol_version !== PROTOCOL_VERSION) throw new Error(`不支持控制协议版本 ${hello.protocol_version}`);
     sessionStorage.setItem(TOKEN_KEY, token);
     sessionStorage.removeItem(LEGACY_TOKEN_KEY);
     localStorage.removeItem(LEGACY_TOKEN_KEY);
@@ -245,15 +249,55 @@ function setConnected(connected) {
 }
 
 async function loadConfig() {
-  const result = await api("/config");
-  state.config = result.config;
-  state.sessionId = state.config?.session?.id || "default";
+  const snapshot = await api("/config");
+  updateConfigSnapshot(snapshot);
   if (state.managed) await loadManagedConfigEditor();
   else elements.configEditor.value = JSON.stringify(state.config, null, 2);
+}
+
+function updateConfigSnapshot(snapshot) {
+  state.configSnapshot = snapshot;
+  state.config = snapshot?.configured || null;
+  const active = snapshot?.active || state.config || {};
+  state.sessionId = active.session?.id || state.config?.session?.id || "default";
   elements.sessionId.textContent = state.sessionId;
-  elements.serverAddress.textContent = `${state.config?.atrust?.server || "—"}:${state.config?.atrust?.port || "—"}`;
-  elements.username.textContent = state.config?.atrust?.username || "—";
-  elements.routingMode.value = state.config?.routing?.mode || "rule";
+  elements.serverAddress.textContent = `${active.atrust?.server || "—"}:${active.atrust?.port || "—"}`;
+  elements.username.textContent = active.atrust?.username || "—";
+  elements.routingMode.value = active.routing?.mode || "rule";
+  renderConfigLifecycle();
+}
+
+function renderConfigLifecycle() {
+  const snapshot = state.configSnapshot || {};
+  const pending = snapshot.pending || [];
+  const sessionPending = pending.filter(change => change.requires === "session_restart");
+  const corePending = pending.filter(change => change.requires === "core_restart");
+  elements.configRevision.textContent = snapshot.revision ?? "—";
+  elements.activeConfigRevision.textContent = snapshot.active_revision ?? "—";
+  elements.configPendingList.replaceChildren();
+  if (pending.length === 0) {
+    elements.configPendingList.className = "config-pending empty";
+    elements.configPendingList.textContent = "configured 与 active 已同步";
+  } else {
+    elements.configPendingList.className = "config-pending";
+    for (const change of pending) {
+      const item = document.createElement("span");
+      item.className = `config-change ${change.requires}`;
+      item.textContent = `${change.path} · ${change.requires === "core_restart" ? "重启 Core" : "重启 Session"}`;
+      elements.configPendingList.append(item);
+    }
+  }
+  elements.applySessionConfigButton.hidden = sessionPending.length === 0;
+  elements.restartCoreButton.hidden = !state.managed || corePending.length === 0;
+  if (corePending.length > 0) {
+    elements.configPendingHint.textContent = state.managed
+      ? "Core 级配置已经写入 YAML，重启 Core 后生效。"
+      : "Core 级配置必须修改 Core 使用的 YAML 文件并重启进程。";
+  } else if (sessionPending.length > 0) {
+    elements.configPendingHint.textContent = "配置已保存，但当前 Session 仍使用 active 快照。";
+  } else {
+    elements.configPendingHint.textContent = "当前没有待应用配置。";
+  }
 }
 
 async function loadManagedConfigEditor() {
@@ -266,6 +310,7 @@ async function loadManagedConfigEditor() {
 
 async function saveConfig() {
   try {
+    let snapshot;
     if (state.managed) {
       const response = await fetch("/webui/config", {
         method: "PUT",
@@ -274,76 +319,75 @@ async function saveConfig() {
       });
       const payload = await response.json();
       if (!response.ok) throw new Error(payload?.error?.message || `应用 YAML 配置失败 (${response.status})`);
+      snapshot = payload.result;
     } else {
       const config = JSON.parse(elements.configEditor.value);
-      await api("/config", { method: "PUT", body: JSON.stringify(config) });
+      snapshot = await api("/config", { method: "PUT", body: JSON.stringify(config) });
     }
+    if (snapshot?.configured) updateConfigSnapshot(snapshot);
     await loadConfig();
-    toast(state.managed ? "配置已应用并写入磁盘" : "配置已应用");
+    const pending = state.configSnapshot?.pending || [];
+    if (pending.some(change => change.requires === "core_restart")) toast("配置已写入磁盘，需要重启 Core");
+    else if (pending.some(change => change.requires === "session_restart")) toast("配置已保存，需要应用 Session 配置");
+    else toast(state.managed ? "配置已应用并写入磁盘" : "配置已应用");
   } catch (error) {
-    toast(error instanceof SyntaxError ? `JSON 格式错误：${error.message}` : error.message, true);
+    const message = error.code === "RESTART_REQUIRED" && !state.managed
+      ? "该字段必须修改 Core 的 YAML 配置文件并重启进程"
+      : error.message;
+    toast(error instanceof SyntaxError ? `JSON 格式错误：${error.message}` : message, true);
   }
 }
 
 async function reloadConfig() {
   try {
-    await api("/config/reload", { method: "POST" });
+    const snapshot = await api("/config/reload", { method: "POST" });
+    updateConfigSnapshot(snapshot);
     await loadConfig();
     await refreshAll();
     toast("已从配置文件重新加载");
   } catch (error) { toast(error.message, true); }
 }
 
-function daemonToSessionConfig(config) {
-  const tun = config.inbounds?.tun || {};
-  const socks = config.inbounds?.socks5 || {};
-  const http = config.inbounds?.http || {};
-  return {
-    protocol: "atrust",
-    session_id: config.session?.id || "default",
-    server_address: config.atrust?.server || "",
-    server_port: config.atrust?.port || 443,
-    username: config.atrust?.username || "",
-    password: config.atrust?.password || "",
-    phone: config.atrust?.phone || "",
-    auth_type: config.atrust?.["auth-type"] || "auth/psw",
-    login_domain: config.atrust?.["login-domain"] || "Radius",
-    update_best_nodes_seconds: parseDurationSeconds(config.atrust?.["update-best-nodes-interval"]),
-    auto_detect_interface: config.underlay?.["auto-detect"] ?? true,
-    bind_interface: config.underlay?.interface || "",
-    disable_auto_reconnect: !(config.session?.["auto-reconnect"] ?? true),
-    disable_remote_dns: !(config.dns?.remote?.enabled ?? true),
-    remote_dns_server: config.dns?.remote?.server || "auto",
-    secondary_dns_server: config.dns?.secondary?.server || "",
-    dns_ttl: parseDurationSeconds(config.dns?.["cache-ttl"]),
-    dns_bind: config.dns?.listen || "",
-    hosts: config.dns?.hosts || {},
-    routing_mode: config.routing?.mode || "rule",
-    internet_outbound: config.routing?.["internet-outbound"] || { type: "direct" },
-    socks_bind: socks.enabled ? socks.listen : "",
-    socks_username: socks.username || "",
-    socks_password: socks.password || "",
-    http_bind: http.enabled ? http.listen : "",
-    tun_enabled: Boolean(tun.enabled),
-    tun_name: tun.name || "ZJU-Portal",
-    tun_address: tun.address || "172.19.0.1/30",
-    tun_mtu: tun.mtu || 1400,
-    tun_auto_route: Boolean(tun["auto-route"]),
-    tun_route_all: Boolean(tun["route-all"]),
-    tun_outbound_interface: tun["outbound-interface"] || "",
-    tun_dns_hijack: Boolean(tun.dns?.hijack),
-    tun_fake_ip: Boolean(tun.dns?.["fake-ip"]),
-    tun_fake_ip_range: tun.dns?.["fake-ip-range"] || "198.18.0.0/16",
-    tun_udp_timeout_seconds: parseDurationSeconds(tun.udp?.["idle-timeout"]),
-    tun_udp_max_flows: tun.udp?.["max-flows"] || 512,
-  };
+async function applySessionConfig() {
+  elements.applySessionConfigButton.disabled = true;
+  try {
+    const snapshot = await api("/config/apply", { method: "POST", body: JSON.stringify({ mode: "restart-session" }) });
+    updateConfigSnapshot(snapshot);
+    await loadConfig();
+    await refreshAll();
+    toast("Session 配置已应用");
+  } catch (error) { toast(error.message, true); }
+  finally { elements.applySessionConfigButton.disabled = false; }
+}
+
+async function restartManagedCore() {
+  if (!state.managed || !window.confirm("重启 Core 会暂时中断当前连接，是否继续？")) return;
+  elements.restartCoreButton.disabled = true;
+  try {
+    await webui("/restart", { method: "POST" });
+    setConnected(false);
+    renderSessionStatus("stopped", { message: "Core 正在重启" });
+    if (!await connectManagedCore()) throw new Error("Core 重启后暂时无法连接");
+    toast("Core 已重启，新配置已生效");
+  } catch (error) { toast(error.message, true); }
+  finally { elements.restartCoreButton.disabled = false; }
 }
 
 async function startSession() {
   setSessionToggleBusy(true);
   try {
     if (!state.config) await loadConfig();
-    const result = await api("/sessions", { method: "POST", body: JSON.stringify({ config: daemonToSessionConfig(state.config) }) });
+    if (["failed", "stopped"].includes(state.sessionState)) {
+      try {
+        await api(`/sessions/${encodeURIComponent(state.sessionId)}`, { method: "DELETE" });
+      } catch (error) {
+        if (error.status !== 404) throw error;
+      }
+    }
+    const result = await api("/sessions", {
+      method: "POST",
+      body: JSON.stringify({ session_id: state.sessionId, resume: "auto" }),
+    });
     state.sessionId = result.session_id || state.sessionId;
     toast("会话启动请求已提交");
     await loadSessionStatus();
@@ -386,6 +430,7 @@ function updateSessionToggle() {
 async function changeRoutingMode() {
   try {
     await api(`/sessions/${encodeURIComponent(state.sessionId)}/routing`, { method: "PUT", body: JSON.stringify({ mode: elements.routingMode.value }) });
+    await loadConfig();
     toast("路由模式已切换");
   } catch (error) { toast(error.message, true); }
 }
@@ -839,19 +884,6 @@ function formatPreciseDuration(milliseconds) {
 function formatDateTime(value) {
   const date = new Date(value);
   return Number.isNaN(date.getTime()) ? "—" : date.toLocaleString();
-}
-
-function parseDurationSeconds(value) {
-  if (typeof value === "number") return value;
-  if (typeof value !== "string" || !value.trim()) return 0;
-  const units = { ns: 1e-9, us: 1e-6, "µs": 1e-6, ms: 1e-3, s: 1, m: 60, h: 3600 };
-  let total = 0;
-  let matched = 0;
-  for (const match of value.trim().matchAll(/(-?\d+(?:\.\d+)?)(ns|us|µs|ms|s|m|h)/g)) {
-    total += Number(match[1]) * units[match[2]];
-    matched += match[0].length;
-  }
-  return matched === value.trim().length ? Math.round(total) : 0;
 }
 
 function escapeHTML(value = "") {

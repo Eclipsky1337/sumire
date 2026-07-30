@@ -31,9 +31,12 @@ session:
   id: default
 
   # 启动 Core 时是否自动建立 aTrust Session
+  # 该字段只能通过修改配置文件并重启 Core 生效
   auto-start: false
 
-  # VPN 网络后端异常时是否自动重连
+  # VPN 网络后端异常或当前登录失效时是否自动重连
+  # 注意 同一账号在其他设备登录时 自动重连可能再次顶掉另一台设备
+  # 需要主动切换设备或保留其他设备登录时建议设为 false
   auto-reconnect: true
 
 state:

@@ -111,7 +111,21 @@
         <article class="card config-card">
           <div class="card-heading">
             <div><span class="label">DAEMON CONFIG</span><h2 id="configTitle">完整配置</h2></div>
-            <div class="row-actions"><button id="reloadConfigButton" class="button secondary">从文件重载</button><button id="saveConfigButton" class="button primary">应用配置</button></div>
+            <div class="row-actions"><button id="reloadConfigButton" class="button secondary">从文件重载</button><button id="saveConfigButton" class="button primary">保存配置</button></div>
+          </div>
+          <div class="config-lifecycle">
+            <div class="config-revisions">
+              <div><span>Configured Revision</span><strong id="configRevision">—</strong></div>
+              <div><span>Active Revision</span><strong id="activeConfigRevision">—</strong></div>
+            </div>
+            <div id="configPendingList" class="config-pending empty">等待配置快照</div>
+            <div class="config-apply-row">
+              <p id="configPendingHint" class="muted">连接 Core 后显示配置应用状态。</p>
+              <div class="row-actions">
+                <button id="applySessionConfigButton" class="button secondary" hidden>重启 Session 应用</button>
+                <button id="restartCoreButton" class="button danger" hidden>重启 Core 应用</button>
+              </div>
+            </div>
           </div>
           <textarea id="configEditor" spellcheck="false" aria-label="JSON 配置"></textarea>
         </article>

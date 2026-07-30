@@ -11,9 +11,10 @@ Sumire 是 [zju-portal-core](https://github.com/Eclipsky1337/zju-portal-core) �
 
 ## Features
 
-- REST Token 连接与协议版本检查；
+- REST Token 连接与 Control Protocol v2 检查；
 - Session 启停、状态和路由模式切换；
-- 完整守护进程配置查看、修改与文件重载；
+- configured/active 配置快照、待应用变更与文件重载；
+- Session 配置显式应用，以及托管模式 Core 配置落盘和重启；
 - SSE 认证 challenge（密码、短信、TOTP、CAS/OAuth、图形验证码点击和认证方式选择）；
 - 流量、服务、逻辑连接和实时事件展示。
 - 托管 Core 的 stdout/stderr 实时日志查看。
@@ -47,7 +48,11 @@ xattr -d com.apple.quarantine zju-portal-core
 ./sumire
 ```
 
-在浏览器中访问显示的地址，一般来说，在配置页面填写好用户名和密码后，点击`开始会话`即可使用
+在浏览器中访问显示的地址。在配置页面填写用户名和密码并保存后：
+
+- 页面提示“重启 Session”时，点击“重启 Session 应用”；
+- 页面提示“重启 Core”时，点击“重启 Core 应用”；
+- 配置生效后，在概览页面启动会话。
 
 > Note: 如果你不确定某项配置的含义，请不要随意修改配置文件
 

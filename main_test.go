@@ -134,6 +134,27 @@ func TestHandlerServesUIAndProxiesAPI(t *testing.T) {
 	}
 }
 
+func TestEmbeddedWebUIUsesControlProtocolV2(t *testing.T) {
+	data, err := webFiles.ReadFile("web/app.js")
+	if err != nil {
+		t.Fatal(err)
+	}
+	script := string(data)
+	for _, expected := range []string{
+		"const PROTOCOL_VERSION = 2",
+		"snapshot?.configured",
+		`resume: "auto"`,
+		`/config/apply`,
+	} {
+		if !strings.Contains(script, expected) {
+			t.Fatalf("app.js does not contain %q", expected)
+		}
+	}
+	if strings.Contains(script, "daemonToSessionConfig") || strings.Contains(script, `body: JSON.stringify({ config:`) {
+		t.Fatal("app.js still uses the legacy low-level session config")
+	}
+}
+
 func TestApplyConfigPersistsAndReloadsCoreRestartChanges(t *testing.T) {
 	originalTransport := http.DefaultTransport
 	requests := 0
