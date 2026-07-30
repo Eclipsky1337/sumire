@@ -34,11 +34,22 @@ sumire/
 └── zju-portal-core
 ```
 
-直接运行 WebUI 即可：
+MacOS需要先信任应用
+
+```bash
+xattr -d com.apple.quarantine sumire
+xattr -d com.apple.quarantine zju-portal-core
+```
+
+直接运行 WebUI 即可，初次使用会自动生成一份config.yaml：
 
 ```bash
 ./sumire
 ```
+
+在浏览器中访问显示的地址，一般来说，在配置页面填写好用户名和密码后，点击`开始会话`即可使用
+
+> Note: 如果你不确定某项配置的含义，请不要随意修改配置文件
 
 WebUI 会自动发现同目录的 `zju-portal-core`（Windows 为 `zju-portal-core.exe`），Core 随 WebUI 自动启动并在异常退出后自动重启。托管数据默认保存在 WebUI 同目录的 `data` 文件夹。
 
