@@ -56,7 +56,6 @@ elements.configEditor.addEventListener("scroll", syncConfigHighlightScroll);
 elements.sessionToggle.addEventListener("click", toggleSession);
 elements.routingMode.addEventListener("change", changeRoutingMode);
 elements.authForm.addEventListener("submit", event => { event.preventDefault(); submitAuth(); });
-elements.skipAuthButton.addEventListener("click", () => submitAuth(true));
 elements.authImage.addEventListener("click", addGraphPoint);
 elements.authImage.addEventListener("load", renderGraphPoints);
 window.addEventListener("resize", () => { renderGraphPoints(); drawTrafficCharts(); });
@@ -662,19 +661,20 @@ function showAuth(challenge) {
     elements.authChoices.querySelectorAll(".choice").forEach(item => item.classList.toggle("selected", item === button));
   }));
   const isChoice = challenge.kind === "select_authentication_method";
+  const canSkipSecondaryAuth = challenge.kind === "secondary_sms" && challenge.allow_skip;
   elements.authValueLabel.hidden = isChoice || isGraphClick;
   elements.graphClickPanel.hidden = !isGraphClick;
   renderGraphPoints();
-  elements.skipAuthButton.hidden = !challenge.allow_skip;
+  elements.skipSecondaryAuth.checked = false;
+  elements.skipSecondaryAuthLabel.hidden = !canSkipSecondaryAuth;
   elements.authValue.type = challenge.kind === "password" ? "password" : "text";
   if (!elements.authDialog.open) elements.authDialog.showModal();
 }
 
-async function submitAuth(skip = false) {
+async function submitAuth() {
   if (!state.challenge) return;
   const response = { challenge_id: state.challenge.id };
-  if (skip) response.skip = true;
-  else if (state.challenge.kind === "select_authentication_method") response.choice_id = state.selectedChoice;
+  if (state.challenge.kind === "select_authentication_method") response.choice_id = state.selectedChoice;
   else if (state.challenge.kind === "graph_click") {
     if (state.graphPoints.length === 0) {
       toast("请先点击验证码中的目标位置", true);
@@ -682,6 +682,7 @@ async function submitAuth(skip = false) {
     }
     response.value = JSON.stringify(graphClickPayload());
   } else response.value = elements.authValue.value;
+  if (state.challenge.kind === "secondary_sms" && elements.skipSecondaryAuth.checked) response.skip = true;
   try {
     await api("/auth/responses", { method: "POST", body: JSON.stringify(response) });
     closeAuth();

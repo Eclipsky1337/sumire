@@ -180,7 +180,8 @@
       <a id="authLink" class="auth-link" target="_blank" rel="noreferrer">在浏览器中打开认证页面</a>
       <div id="authChoices" class="auth-choices"></div>
       <label id="authValueLabel">认证信息<input id="authValue" autocomplete="one-time-code"></label>
-      <div class="dialog-actions"><button id="skipAuthButton" type="button" class="button secondary">跳过</button><button id="submitAuthButton" class="button primary" value="default">提交</button></div>
+      <label id="skipSecondaryAuthLabel" class="checkbox auth-skip-option" hidden><input id="skipSecondaryAuth" type="checkbox"><span>请求跳过后续二次认证</span></label>
+      <div class="dialog-actions"><button id="submitAuthButton" class="button primary" value="default">提交</button></div>
     </form>
   </dialog>
 

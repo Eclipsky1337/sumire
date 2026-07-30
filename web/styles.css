@@ -158,6 +158,8 @@ label { margin-top: 20px; display: grid; gap: 8px; color: #c1d4cd; font-size: 13
 input { width: 100%; padding: 0 12px; }
 .checkbox { display: flex; align-items: center; gap: 9px; }
 .checkbox input { width: 16px; min-height: auto; }
+.auth-skip-option { margin-top: 12px; }
+.auth-skip-option[hidden] { display: none; }
 .form-note, .auth-prompt { color: var(--muted); font-size: 12px; line-height: 1.6; }
 .form-note code { color: var(--green); }
 .dialog-actions { margin-top: 24px; display: flex; justify-content: flex-end; gap: 10px; }
