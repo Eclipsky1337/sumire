@@ -40,7 +40,7 @@ sumire/
 
 WebUI 会自动发现同目录的 `zju-portal-core`（Windows 为 `zju-portal-core.exe`），Core 随 WebUI 自动启动并在异常退出后自动重启。托管数据默认保存在 WebUI 同目录的 `data` 文件夹。
 
-每个 Sumire Release 会自动打包发布时最新的 `zju-portal-core` Release，并在压缩包的 `VERSIONS.txt` 中记录两个组件的版本。
+每个 Sumire Release 会自动打包发布时最新的 `zju-portal-core` Release。
 
 托管模式默认使用：
 

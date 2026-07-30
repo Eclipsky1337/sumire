@@ -87,10 +87,7 @@ jobs:
                 .
             )
 
-            cp README.md "$package_dir/"
             cp core/LICENSE "$package_dir/LICENSE.zju-portal-core"
-            printf 'Sumire: %s\nzju-portal-core: %s (%s)\n' \
-              "$GITHUB_REF_NAME" "$CORE_VERSION" "$core_commit" > "${package_dir}/VERSIONS.txt"
 
             if [[ "$goos" == "windows" ]]; then
               (cd dist && zip -qr "${package_name}.zip" "$package_name")
@@ -129,4 +126,3 @@ jobs:
           fi
 
           gh release create "$GITHUB_REF_NAME" "${release_args[@]}" dist/*
-
