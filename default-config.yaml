@@ -76,7 +76,7 @@ underlay:
   interface: ""
 
   # 是否自动检测默认物理出口，并在接口变化或拨号失败后重新检测
-  auto-detect: true
+  auto-detect: false
 
 routing:
   # 运行时路由模式
