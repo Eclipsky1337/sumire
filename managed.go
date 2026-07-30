@@ -169,6 +169,15 @@ func (supervisor *coreSupervisor) Stop(ctx context.Context) error {
 	}
 }
 
+func (supervisor *coreSupervisor) Restart(ctx context.Context) error {
+	supervisor.applyMu.Lock()
+	defer supervisor.applyMu.Unlock()
+	if err := supervisor.Stop(ctx); err != nil {
+		return err
+	}
+	return supervisor.Start()
+}
+
 func (supervisor *coreSupervisor) Status() runtimeStatus {
 	supervisor.mu.Lock()
 	defer supervisor.mu.Unlock()
@@ -207,10 +216,13 @@ func (supervisor *coreSupervisor) ApplyConfig(ctx context.Context, authorization
 	if err != nil {
 		return 0, nil, nil, err
 	}
-	if status >= 200 && status < 300 {
+	if status >= 200 && status < 300 || coreErrorCode(responseBody) == "RESTART_REQUIRED" {
 		if err := atomicWriteFile(supervisor.configFile, normalizedYAML, managedFileMode); err != nil {
 			return 0, nil, nil, fmt.Errorf("configuration applied but persistence failed: %w", err)
 		}
+	}
+	if coreErrorCode(responseBody) == "RESTART_REQUIRED" {
+		return supervisor.reloadCoreConfig(ctx, authorization)
 	}
 	return status, headers, responseBody, nil
 }
@@ -234,10 +246,13 @@ func (supervisor *coreSupervisor) ApplyYAMLConfig(ctx context.Context, authoriza
 	if err != nil {
 		return 0, nil, nil, err
 	}
-	if status >= 200 && status < 300 {
+	if status >= 200 && status < 300 || coreErrorCode(responseBody) == "RESTART_REQUIRED" {
 		if err := atomicWriteFile(supervisor.configFile, normalizedYAML, managedFileMode); err != nil {
 			return 0, nil, nil, fmt.Errorf("configuration applied but persistence failed: %w", err)
 		}
+	}
+	if coreErrorCode(responseBody) == "RESTART_REQUIRED" {
+		return supervisor.reloadCoreConfig(ctx, authorization)
 	}
 	return status, headers, responseBody, nil
 }
@@ -261,6 +276,38 @@ func (supervisor *coreSupervisor) applyCoreConfig(ctx context.Context, authoriza
 		return 0, nil, nil, fmt.Errorf("read Core configuration response: %w", err)
 	}
 	return response.StatusCode, response.Header.Clone(), responseBody, nil
+}
+
+func (supervisor *coreSupervisor) reloadCoreConfig(ctx context.Context, authorization string) (int, http.Header, []byte, error) {
+	endpoint := *supervisor.coreURL
+	endpoint.Path = joinURLPath(endpoint.Path, "/api/v1/config/reload")
+	request, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint.String(), nil)
+	if err != nil {
+		return 0, nil, nil, err
+	}
+	request.Header.Set("Authorization", authorization)
+	response, err := http.DefaultClient.Do(request)
+	if err != nil {
+		return 0, nil, nil, fmt.Errorf("reload persisted Core configuration: %w", err)
+	}
+	defer response.Body.Close()
+	responseBody, err := io.ReadAll(response.Body)
+	if err != nil {
+		return 0, nil, nil, fmt.Errorf("read Core configuration reload response: %w", err)
+	}
+	return response.StatusCode, response.Header.Clone(), responseBody, nil
+}
+
+func coreErrorCode(body []byte) string {
+	var envelope struct {
+		Error struct {
+			Code string `json:"code"`
+		} `json:"error"`
+	}
+	if json.Unmarshal(body, &envelope) != nil {
+		return ""
+	}
+	return envelope.Error.Code
 }
 
 func ensureTokenFile(path string) error {

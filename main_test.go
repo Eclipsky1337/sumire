@@ -102,7 +102,7 @@ func TestHandlerServesUIAndProxiesAPI(t *testing.T) {
 		return &http.Response{
 			StatusCode: http.StatusOK,
 			Header:     http.Header{"Content-Type": []string{"application/json"}},
-			Body:       io.NopCloser(strings.NewReader(`{"result":{"protocol_version":1}}`)),
+			Body:       io.NopCloser(strings.NewReader(`{"result":{"protocol_version":2}}`)),
 			Request:    request,
 		}, nil
 	})
@@ -129,8 +129,60 @@ func TestHandlerServesUIAndProxiesAPI(t *testing.T) {
 	apiRequest.Header.Set("Authorization", "Bearer test-token")
 	apiRecorder := httptest.NewRecorder()
 	handler.ServeHTTP(apiRecorder, apiRequest)
-	if apiRecorder.Code != http.StatusOK || !strings.Contains(apiRecorder.Body.String(), `"protocol_version":1`) {
+	if apiRecorder.Code != http.StatusOK || !strings.Contains(apiRecorder.Body.String(), `"protocol_version":2`) {
 		t.Fatalf("API response: status=%d body=%q", apiRecorder.Code, apiRecorder.Body.String())
+	}
+}
+
+func TestApplyConfigPersistsAndReloadsCoreRestartChanges(t *testing.T) {
+	originalTransport := http.DefaultTransport
+	requests := 0
+	http.DefaultTransport = roundTripFunc(func(request *http.Request) (*http.Response, error) {
+		requests++
+		switch requests {
+		case 1:
+			if request.Method != http.MethodPut || request.URL.Path != "/api/v1/config" {
+				t.Fatalf("apply request = %s %s", request.Method, request.URL.Path)
+			}
+			return &http.Response{
+				StatusCode: http.StatusConflict,
+				Header:     http.Header{"Content-Type": []string{"application/json"}},
+				Body:       io.NopCloser(strings.NewReader(`{"error":{"code":"RESTART_REQUIRED","message":"restart required","retryable":false}}`)),
+				Request:    request,
+			}, nil
+		case 2:
+			if request.Method != http.MethodPost || request.URL.Path != "/api/v1/config/reload" {
+				t.Fatalf("reload request = %s %s", request.Method, request.URL.Path)
+			}
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Header:     http.Header{"Content-Type": []string{"application/json"}},
+				Body:       io.NopCloser(strings.NewReader(`{"result":{"revision":2,"configured":{},"active":{},"active_revision":1,"pending":[{"path":"inbounds.tun.mtu","requires":"core_restart"}]}}`)),
+				Request:    request,
+			}, nil
+		default:
+			t.Fatalf("unexpected request %d", requests)
+			return nil, nil
+		}
+	})
+	defer func() { http.DefaultTransport = originalTransport }()
+
+	directory := t.TempDir()
+	target, _ := url.Parse("http://core.invalid")
+	supervisor := newCoreSupervisor("unused", filepath.Join(directory, "config.yaml"), filepath.Join(directory, "resume.json"), filepath.Join(directory, "control.token"), "127.0.0.1:9090", target)
+	status, _, body, err := supervisor.ApplyConfig(context.Background(), "Bearer managed-token", []byte(`{"version":1,"session":{"auto-start":false},"inbounds":{"tun":{"mtu":1300}}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if status != http.StatusOK || !strings.Contains(string(body), `"core_restart"`) {
+		t.Fatalf("status/body = %d/%s", status, body)
+	}
+	persisted, err := os.ReadFile(supervisor.configFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(persisted), "mtu: 1300") {
+		t.Fatalf("persisted config = %s", persisted)
 	}
 }
 

@@ -204,6 +204,23 @@ func newHandler(target *url.URL, assets fs.FS, supervisor *coreSupervisor) http.
 			methodNotAllowed(writer, http.MethodGet, http.MethodPut)
 		}
 	})
+	mux.HandleFunc("/webui/restart", func(writer http.ResponseWriter, request *http.Request) {
+		if request.Method != http.MethodPost {
+			methodNotAllowed(writer, http.MethodPost)
+			return
+		}
+		if supervisor == nil {
+			writeWebError(writer, http.StatusConflict, "CORE_NOT_MANAGED", "Core is not managed by WebUI")
+			return
+		}
+		restartCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cancel()
+		if err := supervisor.Restart(restartCtx); err != nil {
+			writeWebError(writer, http.StatusInternalServerError, "CORE_RESTART_FAILED", err.Error())
+			return
+		}
+		writeWebJSON(writer, http.StatusOK, map[string]any{"result": supervisor.Status()})
+	})
 	mux.HandleFunc("/webui/logs", func(writer http.ResponseWriter, request *http.Request) {
 		if request.Method != http.MethodGet {
 			methodNotAllowed(writer, http.MethodGet)
