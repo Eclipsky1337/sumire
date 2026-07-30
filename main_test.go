@@ -64,11 +64,11 @@ func TestCoreExecutableName(t *testing.T) {
 func TestResolveBundledCoreBinary(t *testing.T) {
 	directory := t.TempDir()
 	webuiPath := filepath.Join(directory, "sumire")
-	corePath := filepath.Join(directory, "zju-portal-core")
+	corePath := filepath.Join(directory, coreExecutableName(runtime.GOOS))
 	if err := os.WriteFile(corePath, []byte("binary"), 0700); err != nil {
 		t.Fatal(err)
 	}
-	resolved, managed, err := resolveCoreBinary("", false, webuiPath, "linux")
+	resolved, managed, err := resolveCoreBinary("", false, webuiPath, runtime.GOOS)
 	if err != nil {
 		t.Fatal(err)
 	}
