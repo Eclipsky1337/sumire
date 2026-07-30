@@ -44,6 +44,7 @@ document.querySelectorAll(".nav-item").forEach(button => button.addEventListener
 elements.connectButton.addEventListener("click", openConnectDialog);
 elements.connectForm.addEventListener("submit", event => { event.preventDefault(); connect(); });
 elements.refreshButton.addEventListener("click", refreshAll);
+elements.refreshSessionInfoButton.addEventListener("click", refreshSessionInfo);
 elements.refreshConnectionsButton.addEventListener("click", loadConnections);
 elements.activeConnectionsButton.addEventListener("click", () => showView("connections"));
 elements.clearEventsButton.addEventListener("click", () => { elements.eventLog.innerHTML = "尚未收到事件"; elements.eventLog.classList.add("empty"); });
@@ -249,9 +250,10 @@ function setConnected(connected) {
   if (!connected) elements.coreVersion.textContent = "连接已断开";
 }
 
-async function loadConfig() {
+async function loadConfig(refreshEditor = true) {
   const snapshot = await api("/config");
   updateConfigSnapshot(snapshot);
+  if (!refreshEditor) return;
   if (state.managed) await loadManagedConfigEditor();
   else {
     elements.configEditor.value = JSON.stringify(state.config, null, 2);
@@ -424,7 +426,7 @@ async function startSession() {
     });
     state.sessionId = result.session_id || state.sessionId;
     toast("会话启动请求已提交");
-    await loadSessionStatus();
+    await refreshSessionInfo();
   } catch (error) { toast(error.message, true); }
   finally { setSessionToggleBusy(false); }
 }
@@ -476,6 +478,15 @@ async function changeRoutingMode() {
 
 async function refreshAll() {
   await Promise.allSettled([loadSessionStatus(), loadTraffic(), loadServices(), loadRoutingMode()]);
+}
+
+async function refreshSessionInfo() {
+  elements.refreshSessionInfoButton.disabled = true;
+  try {
+    await Promise.allSettled([loadConfig(false), loadSessionStatus(), loadTraffic()]);
+  } finally {
+    elements.refreshSessionInfoButton.disabled = false;
+  }
 }
 
 async function loadSessionStatus() {
@@ -617,7 +628,10 @@ function subscribeEvents() {
 function handleEvent(event) {
   appendEvent(event);
   if (event.session_id) state.sessionId = event.session_id;
-  if (event.type === "session.state_changed") renderSessionStatus(event.state);
+  if (event.type === "session.state_changed") {
+    renderSessionStatus(event.state);
+    if (event.state === "ready") loadConfig(false).catch(handleBackgroundError);
+  }
   if (["auth.required", "auth.browser_required"].includes(event.type) && event.auth) showAuth(event.auth);
   if (event.type === "auth.completed") closeAuth();
   if (event.type === "routing.mode_changed") elements.routingMode.value = event.routing_mode;
