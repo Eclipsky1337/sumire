@@ -7,6 +7,8 @@
   <a href="https://github.com/Eclipsky1337/sumire/releases"><img src="https://img.shields.io/github/v/release/Eclipsky1337/sumire?include_prereleases" alt="Release"></a>
 </p>
 
+Sumire 是 [zju-portal-core](https://github.com/Eclipsky1337/zju-portal-core) 的轻量 WebUI，提供会话控制、认证、配置管理和运行状态展示。
+
 ## Features
 
 - REST Token 连接与协议版本检查；
