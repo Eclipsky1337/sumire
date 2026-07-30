@@ -106,10 +106,6 @@ select { padding: 0 34px 0 12px; }
 .details dd { margin: 0; max-width: 65%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .config-card { padding-bottom: 18px; }
 .config-lifecycle { margin-bottom: 14px; padding: 14px; border: 1px solid var(--line); border-radius: 10px; background: rgba(6, 18, 15, .45); }
-.config-revisions { display: flex; gap: 28px; margin-bottom: 12px; }
-.config-revisions div { display: grid; gap: 3px; }
-.config-revisions span { color: var(--muted); font-size: 11px; letter-spacing: .08em; text-transform: uppercase; }
-.config-revisions strong { color: var(--text); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
 .config-pending { display: flex; flex-wrap: wrap; gap: 8px; min-height: 30px; }
 .config-pending.empty { align-items: center; color: var(--muted); font-size: 13px; }
 .config-change { padding: 6px 9px; border: 1px solid rgba(104, 169, 255, .3); border-radius: 999px; color: #a9ccff; background: rgba(104, 169, 255, .08); font: 11px ui-monospace, SFMono-Regular, Menlo, monospace; }

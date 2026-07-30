@@ -278,8 +278,6 @@ function renderConfigLifecycle() {
   const pending = snapshot.pending || [];
   const sessionPending = pending.filter(change => change.requires === "session_restart");
   const corePending = pending.filter(change => change.requires === "core_restart");
-  elements.configRevision.textContent = snapshot.revision ?? "—";
-  elements.activeConfigRevision.textContent = snapshot.active_revision ?? "—";
   elements.configPendingList.replaceChildren();
   if (pending.length === 0) {
     elements.configPendingList.className = "config-pending empty";
