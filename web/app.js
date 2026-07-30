@@ -49,9 +49,10 @@ elements.activeConnectionsButton.addEventListener("click", () => showView("conne
 elements.clearEventsButton.addEventListener("click", () => { elements.eventLog.innerHTML = "尚未收到事件"; elements.eventLog.classList.add("empty"); });
 elements.clearCoreLogsButton.addEventListener("click", () => { elements.coreLogViewer.innerHTML = "暂无 Core 日志"; elements.coreLogViewer.classList.add("empty"); });
 elements.saveConfigButton.addEventListener("click", saveConfig);
-elements.reloadConfigButton.addEventListener("click", reloadConfig);
 elements.applySessionConfigButton.addEventListener("click", applySessionConfig);
 elements.restartCoreButton.addEventListener("click", restartManagedCore);
+elements.configEditor.addEventListener("input", renderConfigHighlights);
+elements.configEditor.addEventListener("scroll", syncConfigHighlightScroll);
 elements.sessionToggle.addEventListener("click", toggleSession);
 elements.routingMode.addEventListener("change", changeRoutingMode);
 elements.authForm.addEventListener("submit", event => { event.preventDefault(); submitAuth(); });
@@ -204,6 +205,7 @@ async function connect(silent = false) {
 
 async function webui(path, options = {}) {
   const headers = new Headers(options.headers || {});
+  if (state.token) headers.set("Authorization", `Bearer ${state.token}`);
   if (options.body && !headers.has("Content-Type")) headers.set("Content-Type", "application/json");
   const response = await fetch(`/webui${path}`, { ...options, headers });
   const payload = await response.json();
@@ -252,7 +254,11 @@ async function loadConfig() {
   const snapshot = await api("/config");
   updateConfigSnapshot(snapshot);
   if (state.managed) await loadManagedConfigEditor();
-  else elements.configEditor.value = JSON.stringify(state.config, null, 2);
+  else {
+    elements.configEditor.value = JSON.stringify(state.config, null, 2);
+    elements.configTitle.textContent = "Configured 配置（JSON）";
+    renderConfigHighlights();
+  }
 }
 
 function updateConfigSnapshot(snapshot) {
@@ -287,7 +293,7 @@ function renderConfigLifecycle() {
       elements.configPendingList.append(item);
     }
   }
-  elements.applySessionConfigButton.hidden = sessionPending.length === 0;
+  elements.applySessionConfigButton.hidden = sessionPending.length === 0 || corePending.length > 0;
   elements.restartCoreButton.hidden = !state.managed || corePending.length === 0;
   if (corePending.length > 0) {
     elements.configPendingHint.textContent = state.managed
@@ -298,6 +304,40 @@ function renderConfigLifecycle() {
   } else {
     elements.configPendingHint.textContent = "当前没有待应用配置。";
   }
+  renderConfigHighlights();
+}
+
+function renderConfigHighlights() {
+  const text = elements.configEditor.value || "";
+  const pending = state.configSnapshot?.pending || [];
+  const paths = state.managed ? yamlPathsByLine(text) : [];
+  const lines = text.split("\n");
+  elements.configHighlight.innerHTML = lines.map((line, index) => {
+    const path = paths[index] || "";
+    const change = pending.find(item => path === item.path || path.startsWith(`${item.path}.`));
+    const className = change ? ` config-editor-line-${change.requires}` : "";
+    return `<span class="config-editor-line${className}">${line ? escapeHTML(line) : "&nbsp;"}</span>`;
+  }).join("");
+  syncConfigHighlightScroll();
+}
+
+function yamlPathsByLine(text) {
+  const stack = [];
+  return text.split("\n").map(line => {
+    const match = /^(\s*)(?:"([^"]+)"|'([^']+)'|([A-Za-z0-9_.-]+))\s*:(?:\s|$)/.exec(line);
+    if (!match) return "";
+    const indent = match[1].replaceAll("\t", "  ").length;
+    const key = match[2] || match[3] || match[4];
+    while (stack.length && stack[stack.length - 1].indent >= indent) stack.pop();
+    const path = [...stack.map(item => item.key), key].join(".");
+    stack.push({ indent, key });
+    return path;
+  });
+}
+
+function syncConfigHighlightScroll() {
+  elements.configHighlight.scrollTop = elements.configEditor.scrollTop;
+  elements.configHighlight.scrollLeft = elements.configEditor.scrollLeft;
 }
 
 async function loadManagedConfigEditor() {
@@ -305,7 +345,8 @@ async function loadManagedConfigEditor() {
   const response = await fetch("/webui/config");
   if (!response.ok) throw new Error(`读取 YAML 配置失败 (${response.status})`);
   elements.configEditor.value = await response.text();
-  elements.configTitle.textContent = "完整配置（YAML）";
+  elements.configTitle.textContent = "磁盘配置（YAML）";
+  renderConfigHighlights();
 }
 
 async function saveConfig() {
@@ -327,25 +368,15 @@ async function saveConfig() {
     if (snapshot?.configured) updateConfigSnapshot(snapshot);
     await loadConfig();
     const pending = state.configSnapshot?.pending || [];
-    if (pending.some(change => change.requires === "core_restart")) toast("配置已写入磁盘，需要重启 Core");
-    else if (pending.some(change => change.requires === "session_restart")) toast("配置已保存，需要应用 Session 配置");
-    else toast(state.managed ? "配置已应用并写入磁盘" : "配置已应用");
+    if (pending.some(change => change.requires === "core_restart")) toast("修改已保存到磁盘，需要重启 Core 后生效");
+    else if (pending.some(change => change.requires === "session_restart")) toast("修改已保存到磁盘，尚未应用到当前 Session");
+    else toast(state.managed ? "修改已保存到磁盘并生效" : "配置已应用");
   } catch (error) {
     const message = error.code === "RESTART_REQUIRED" && !state.managed
       ? "该字段必须修改 Core 的 YAML 配置文件并重启进程"
       : error.message;
     toast(error instanceof SyntaxError ? `JSON 格式错误：${error.message}` : message, true);
   }
-}
-
-async function reloadConfig() {
-  try {
-    const snapshot = await api("/config/reload", { method: "POST" });
-    updateConfigSnapshot(snapshot);
-    await loadConfig();
-    await refreshAll();
-    toast("已从配置文件重新加载");
-  } catch (error) { toast(error.message, true); }
 }
 
 async function applySessionConfig() {
@@ -356,7 +387,13 @@ async function applySessionConfig() {
     await loadConfig();
     await refreshAll();
     toast("Session 配置已应用");
-  } catch (error) { toast(error.message, true); }
+  } catch (error) {
+    await Promise.allSettled([loadConfig(), loadSessionStatus()]);
+    const rollback = state.sessionState === "ready"
+      ? "当前 Session 已回退到之前的 active 配置，磁盘修改仍然保留。"
+      : "磁盘修改仍然保留，但当前 Session 未恢复到 ready。";
+    toast(`Session 配置应用失败：${error.message}。${rollback}`, true);
+  }
   finally { elements.applySessionConfigButton.disabled = false; }
 }
 
@@ -429,7 +466,12 @@ function updateSessionToggle() {
 
 async function changeRoutingMode() {
   try {
-    await api(`/sessions/${encodeURIComponent(state.sessionId)}/routing`, { method: "PUT", body: JSON.stringify({ mode: elements.routingMode.value }) });
+    if (state.managed) {
+      const snapshot = await webui("/routing", { method: "PUT", body: JSON.stringify({ mode: elements.routingMode.value }) });
+      updateConfigSnapshot(snapshot);
+    } else {
+      await api(`/sessions/${encodeURIComponent(state.sessionId)}/routing`, { method: "PUT", body: JSON.stringify({ mode: elements.routingMode.value }) });
+    }
     await loadConfig();
     toast("路由模式已切换");
   } catch (error) { toast(error.message, true); }

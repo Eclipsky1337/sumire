@@ -13,7 +13,7 @@ Sumire 是 [zju-portal-core](https://github.com/Eclipsky1337/zju-portal-core) �
 
 - REST Token 连接与 Control Protocol v2 检查；
 - Session 启停、状态和路由模式切换；
-- configured/active 配置快照、待应用变更与文件重载；
+- configured/active 配置快照、待应用字段高亮与显式应用；
 - Session 配置显式应用，以及托管模式 Core 配置落盘和重启；
 - SSE 认证 challenge（密码、短信、TOTP、CAS/OAuth、图形验证码点击和认证方式选择）；
 - 流量、服务、逻辑连接和实时事件展示。

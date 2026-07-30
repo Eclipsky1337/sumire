@@ -111,7 +111,7 @@
         <article class="card config-card">
           <div class="card-heading">
             <div><span class="label">DAEMON CONFIG</span><h2 id="configTitle">完整配置</h2></div>
-            <div class="row-actions"><button id="reloadConfigButton" class="button secondary">从文件重载</button><button id="saveConfigButton" class="button primary">保存配置</button></div>
+            <div class="row-actions"><button id="saveConfigButton" class="button primary">保存修改</button></div>
           </div>
           <div class="config-lifecycle">
             <div class="config-revisions">
@@ -127,7 +127,10 @@
               </div>
             </div>
           </div>
-          <textarea id="configEditor" spellcheck="false" aria-label="JSON 配置"></textarea>
+          <div class="config-editor-shell">
+            <pre id="configHighlight" class="config-editor-highlight" aria-hidden="true"></pre>
+            <textarea id="configEditor" spellcheck="false" aria-label="配置编辑器"></textarea>
+          </div>
         </article>
       </section>
 

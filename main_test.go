@@ -155,6 +155,42 @@ func TestEmbeddedWebUIUsesControlProtocolV2(t *testing.T) {
 	}
 }
 
+func TestEmbeddedWebUIUsesDiskBackedConfigLifecycle(t *testing.T) {
+	scriptData, err := webFiles.ReadFile("web/app.js")
+	if err != nil {
+		t.Fatal(err)
+	}
+	pageData, err := webFiles.ReadFile("web/index.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	styleData, err := webFiles.ReadFile("web/styles.css")
+	if err != nil {
+		t.Fatal(err)
+	}
+	script := string(scriptData)
+	page := string(pageData)
+	for _, expected := range []string{
+		`webui("/routing"`,
+		"corePending.length > 0",
+		"Session 配置应用失败",
+		"config-editor-line-${change.requires}",
+	} {
+		if !strings.Contains(script, expected) {
+			t.Fatalf("app.js does not contain %q", expected)
+		}
+	}
+	if strings.Contains(script, "function reloadConfig") || strings.Contains(page, "reloadConfigButton") {
+		t.Fatal("manual config reload control is still exposed")
+	}
+	if !strings.Contains(page, `id="configHighlight"`) {
+		t.Fatal("config highlight layer is missing")
+	}
+	if !strings.Contains(string(styleData), ".config-editor-line-core_restart") || !strings.Contains(string(styleData), ".config-editor-line-session_restart") {
+		t.Fatal("config pending highlight styles are missing")
+	}
+}
+
 func TestApplyConfigPersistsAndReloadsCoreRestartChanges(t *testing.T) {
 	originalTransport := http.DefaultTransport
 	requests := 0
