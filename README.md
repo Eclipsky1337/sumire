@@ -14,6 +14,7 @@ Sumire 是 [zju-portal-core](https://github.com/Eclipsky1337/zju-portal-core) �
 - REST Token 连接与 Control Protocol v2 检查；
 - Session 启停、状态和路由模式切换；
 - Windows HTTP/HTTPS 与 macOS HTTP/HTTPS/SOCKS 系统代理开关；
+- 托管模式 TUN 快捷开关和启动权限检查；
 - configured/active 配置快照、待应用字段高亮与显式应用；
 - Session 配置显式应用，以及托管模式 Core 配置落盘和重启；
 - SSE 认证 challenge（密码、短信、TOTP、CAS/OAuth、图形验证码点击和认证方式选择）；
@@ -70,12 +71,34 @@ WebUI 会自动发现同目录的 `zju-portal-core`（Windows 为 `zju-portal-co
 
 Windows 和 macOS 可在概览页面开启系统代理。Windows 使用当前 active 配置中的 HTTP 入站设置 HTTP/HTTPS 代理；macOS 还会同时使用 active SOCKS5 入站设置 SOCKS 代理。开启后每 5 秒检查一次系统设置，被其他软件修改时会自动重新应用。开启时会覆盖现有代理，关闭时直接清空，不恢复之前的代理设置。Linux 暂不提供此功能。
 
+托管模式可在概览页面切换 TUN。单击开关后 Sumire 会写入 `data/config.yaml` 并自动重启 Core 应用配置。启用 TUN 时 Sumire 自身必须具有系统网络管理权限：macOS/Linux 使用 `sudo ./sumire` 启动，Windows 需要以管理员身份运行。配置已启用 TUN 但当前进程权限不足时，Sumire 会拒绝启动；普通权限运行时页面也不会允许开启 TUN。
+
 Core 完整输出默认只显示在 WebUI 的 Core 日志页面。排查启动问题时，可以使用 `./sumire -core-log-console` 将 Core stdout/stderr 同步输出到终端。
+
+托管模式允许监听非回环地址，例如：
+
+```bash
+./sumire -listen :9080
+```
+
+启动时会输出安全警告。任何能够访问该 WebUI 的客户端都可以取得托管 Core Token 并控制会话，因此只应在可信网络中使用。
 
 ### 外部模式
 
-也可以继续连接手动启动的 Core：
+也可以连接手动启动的 Core。Core 使用默认地址时只需：
 
 ```bash
-./sumire -external-core -listen 127.0.0.1:9080 -core http://127.0.0.1:9090
+./sumire external
+```
+
+连接其他地址时可以直接把地址放在末尾，`http://` 可省略：
+
+```bash
+./sumire external 192.168.1.10:9090
+```
+
+需要让 WebUI 监听所有网络接口时：
+
+```bash
+./sumire external -listen :9080
 ```

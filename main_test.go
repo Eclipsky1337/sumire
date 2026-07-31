@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"io/fs"
 	"net/http"
@@ -12,6 +13,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -37,6 +39,12 @@ func TestSecurityHeaders(t *testing.T) {
 	if got := recorder.Header().Get("Content-Security-Policy"); got == "" {
 		t.Fatal("Content-Security-Policy is empty")
 	}
+
+	apiRecorder := httptest.NewRecorder()
+	handler.ServeHTTP(apiRecorder, httptest.NewRequest(http.MethodGet, "/api/v1/config", nil))
+	if got := apiRecorder.Header().Get("Cache-Control"); got != "no-store" {
+		t.Fatalf("API Cache-Control = %q", got)
+	}
 }
 
 func TestLoopbackListenValidation(t *testing.T) {
@@ -49,6 +57,54 @@ func TestLoopbackListenValidation(t *testing.T) {
 		if isLoopbackListen(address) {
 			t.Fatalf("expected %q to be rejected", address)
 		}
+	}
+}
+
+func TestParseCLIOptions(t *testing.T) {
+	tests := []struct {
+		name         string
+		args         []string
+		externalCore bool
+		listen       string
+		coreAddress  string
+	}{
+		{name: "managed defaults", coreAddress: "http://127.0.0.1:9090", listen: "127.0.0.1:9080"},
+		{name: "external subcommand", args: []string{"external"}, externalCore: true, coreAddress: "http://127.0.0.1:9090", listen: "127.0.0.1:9080"},
+		{name: "external address", args: []string{"external", "192.168.1.10:9090"}, externalCore: true, coreAddress: "http://192.168.1.10:9090", listen: "127.0.0.1:9080"},
+		{name: "external options", args: []string{"external", "-listen", ":9080", "https://core.example:9443"}, externalCore: true, coreAddress: "https://core.example:9443", listen: ":9080"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			options, err := parseCLIOptions(test.args)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if options.externalCore != test.externalCore || options.listen != test.listen || options.coreAddress != test.coreAddress {
+				t.Fatalf("options = %+v", options)
+			}
+		})
+	}
+	if _, err := parseCLIOptions([]string{"unexpected"}); err == nil {
+		t.Fatal("unexpected positional mode was accepted")
+	}
+	if _, err := parseCLIOptions([]string{"external", "one", "two"}); err == nil {
+		t.Fatal("multiple external addresses were accepted")
+	}
+	if _, err := parseCLIOptions([]string{"-external-core"}); err == nil {
+		t.Fatal("removed external-core flag was accepted")
+	}
+	if _, err := parseCLIOptions([]string{"-core", "127.0.0.1:9090"}); err == nil {
+		t.Fatal("removed core flag was accepted")
+	}
+}
+
+func TestManagedListenWarning(t *testing.T) {
+	if warning := managedListenWarning("127.0.0.1:9080"); warning != "" {
+		t.Fatalf("loopback warning = %q", warning)
+	}
+	warning := managedListenWarning(":9080")
+	if !strings.Contains(warning, "managed Core token") || !strings.Contains(warning, ":9080") {
+		t.Fatalf("non-loopback warning = %q", warning)
 	}
 }
 
@@ -134,6 +190,21 @@ func TestHandlerServesUIAndProxiesAPI(t *testing.T) {
 	}
 }
 
+func TestManagedHelloProbeConnectionRefusedIsNotLogged(t *testing.T) {
+	request := httptest.NewRequest(http.MethodGet, "/api/v1/hello", nil)
+	supervisor := &coreSupervisor{}
+	if shouldLogProxyError(supervisor, request, syscall.ECONNREFUSED) {
+		t.Fatal("managed Core hello probe connection refusal should be silent")
+	}
+	if !shouldLogProxyError(nil, request, syscall.ECONNREFUSED) {
+		t.Fatal("external Core connection refusal should still be logged")
+	}
+	request.URL.Path = "/api/v1/config"
+	if !shouldLogProxyError(supervisor, request, syscall.ECONNREFUSED) {
+		t.Fatal("non-probe managed Core errors should still be logged")
+	}
+}
+
 func TestManagedSystemProxyEndpoint(t *testing.T) {
 	assets, err := fs.Sub(webFiles, "web")
 	if err != nil {
@@ -215,6 +286,13 @@ func TestEmbeddedWebUIUsesDiskBackedConfigLifecycle(t *testing.T) {
 	page := string(pageData)
 	for _, expected := range []string{
 		`webui("/routing"`,
+		`webui("/tun"`,
+		"bootstrap.tun_available",
+		"TUN 需要以 root/管理员权限启动 Sumire",
+		"previousRuntime.pid === restartedRuntime.pid",
+		"confirmRestart: false",
+		"TUN 已${enabled ? \"启用\" : \"关闭\"}并应用",
+		`cache: "no-store"`,
 		"corePending.length > 0",
 		"Session 配置应用失败",
 		"config-editor-line-${change.requires}",
@@ -228,6 +306,9 @@ func TestEmbeddedWebUIUsesDiskBackedConfigLifecycle(t *testing.T) {
 	}
 	if !strings.Contains(page, `id="configHighlight"`) {
 		t.Fatal("config highlight layer is missing")
+	}
+	if !strings.Contains(page, `id="tunToggle"`) {
+		t.Fatal("TUN toggle is missing")
 	}
 	if !strings.Contains(string(styleData), ".config-editor-line-core_restart") || !strings.Contains(string(styleData), ".config-editor-line-session_restart") {
 		t.Fatal("config pending highlight styles are missing")
@@ -465,6 +546,96 @@ func TestPrepareUsesEmbeddedInitialConfiguration(t *testing.T) {
 	assertManagedConfig(t, config, resumeFile, tokenFile)
 }
 
+func TestManagedTUNEnabled(t *testing.T) {
+	directory := t.TempDir()
+	configFile := filepath.Join(directory, "config.yaml")
+	if err := os.WriteFile(configFile, []byte("inbounds:\n  tun:\n    enabled: true\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	enabled, err := managedTUNEnabled(configFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !enabled {
+		t.Fatal("TUN configuration was not detected")
+	}
+}
+
+func TestManagedCoreRejectsTUNWithoutPrivileges(t *testing.T) {
+	if tunPrivilegesAvailable() {
+		t.Skip("current test process already has TUN privileges")
+	}
+	command, privileged, err := newManagedCoreCommand("unused", "config.yaml", true)
+	if err == nil {
+		t.Fatal("TUN command was allowed without root or administrator privileges")
+	}
+	if command != nil || privileged {
+		t.Fatalf("command = %#v, privileged = %t", command, privileged)
+	}
+}
+
+func TestUpdateTUNEnabledPersistsAndReloads(t *testing.T) {
+	originalTransport := http.DefaultTransport
+	expectedEnabled := true
+	http.DefaultTransport = roundTripFunc(func(request *http.Request) (*http.Response, error) {
+		if request.Method != http.MethodPost || request.URL.Path != "/api/v1/config/reload" {
+			t.Fatalf("reload request = %s %s", request.Method, request.URL.Path)
+		}
+		body := fmt.Sprintf(`{"result":{"revision":2,"configured":{"inbounds":{"tun":{"enabled":%t}}},"active":{"inbounds":{"tun":{"enabled":false}}},"active_revision":1,"pending":[{"path":"inbounds.tun.enabled","requires":"core_restart"}]}}`, expectedEnabled)
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     http.Header{"Content-Type": []string{"application/json"}},
+			Body:       io.NopCloser(strings.NewReader(body)),
+			Request:    request,
+		}, nil
+	})
+	defer func() { http.DefaultTransport = originalTransport }()
+
+	directory := t.TempDir()
+	target, _ := url.Parse("http://core.invalid")
+	supervisor := newCoreSupervisor("unused", filepath.Join(directory, "config.yaml"), filepath.Join(directory, "resume.json"), filepath.Join(directory, "control.token"), "127.0.0.1:9090", target)
+	if err := supervisor.Prepare(); err != nil {
+		t.Fatal(err)
+	}
+	status, _, _, err := supervisor.UpdateTUNEnabled(context.Background(), "Bearer managed-token", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if status != http.StatusOK {
+		t.Fatalf("status = %d", status)
+	}
+	persisted, err := os.ReadFile(supervisor.configFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(persisted), "# 是否创建系统 TUN 设备") {
+		t.Fatalf("persisted config = %s", persisted)
+	}
+	enabled, err := managedTUNEnabled(supervisor.configFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !enabled {
+		t.Fatal("persisted TUN configuration is disabled")
+	}
+
+	expectedEnabled = false
+	status, _, _, err = supervisor.UpdateTUNEnabled(context.Background(), "Bearer managed-token", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if status != http.StatusOK {
+		t.Fatalf("disable status = %d", status)
+	}
+	enabled, err = managedTUNEnabled(supervisor.configFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if enabled {
+		t.Fatal("persisted TUN configuration is still enabled")
+	}
+}
+
 func TestApplyYAMLConfigPreservesComments(t *testing.T) {
 	originalTransport := http.DefaultTransport
 	http.DefaultTransport = roundTripFunc(func(request *http.Request) (*http.Response, error) {
@@ -535,6 +706,38 @@ func TestManagedCoreRestartsAfterUnexpectedExit(t *testing.T) {
 	}
 	stopCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
+	if err := supervisor.Stop(stopCtx); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestManagedCoreRestartReplacesProcess(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("shell helper is not available on Windows")
+	}
+	directory := t.TempDir()
+	helper := filepath.Join(directory, "fake-core.sh")
+	script := "#!/bin/sh\ntrap 'exit 0' INT TERM\nwhile :; do sleep 1; done\n"
+	if err := os.WriteFile(helper, []byte(script), 0700); err != nil {
+		t.Fatal(err)
+	}
+	target, _ := url.Parse("http://127.0.0.1:9090")
+	supervisor := newCoreSupervisor(helper, filepath.Join(directory, "config.yaml"), filepath.Join(directory, "resume.json"), filepath.Join(directory, "control.token"), "127.0.0.1:9090", target)
+	if err := supervisor.Start(); err != nil {
+		t.Fatal(err)
+	}
+	firstPID := supervisor.Status().PID
+	restartCtx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	if err := supervisor.Restart(restartCtx); err != nil {
+		t.Fatal(err)
+	}
+	secondPID := supervisor.Status().PID
+	if firstPID == 0 || secondPID == 0 || firstPID == secondPID {
+		t.Fatalf("restart PIDs = %d -> %d", firstPID, secondPID)
+	}
+	stopCtx, stopCancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer stopCancel()
 	if err := supervisor.Stop(stopCtx); err != nil {
 		t.Fatal(err)
 	}

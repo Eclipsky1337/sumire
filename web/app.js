@@ -18,6 +18,7 @@ const state = {
   managed: false,
   connected: false,
   managedConnecting: false,
+  coreRestarting: false,
   runtimeTimer: null,
   logCursor: 0,
   logTimer: null,
@@ -28,6 +29,10 @@ const state = {
   systemProxySOCKSSupported: false,
   systemProxyEnabled: false,
   systemProxyBusy: false,
+  tunConfiguredEnabled: false,
+  tunActiveEnabled: false,
+  tunAvailable: false,
+  tunBusy: false,
   speedHistory: { download: [], upload: [] },
   connections: [],
   selectedConnection: null,
@@ -55,11 +60,12 @@ elements.clearEventsButton.addEventListener("click", () => { elements.eventLog.i
 elements.clearCoreLogsButton.addEventListener("click", () => { elements.coreLogViewer.innerHTML = "暂无 Core 日志"; elements.coreLogViewer.classList.add("empty"); });
 elements.saveConfigButton.addEventListener("click", saveConfig);
 elements.applySessionConfigButton.addEventListener("click", applySessionConfig);
-elements.restartCoreButton.addEventListener("click", restartManagedCore);
+elements.restartCoreButton.addEventListener("click", () => restartManagedCore());
 elements.configEditor.addEventListener("input", renderConfigHighlights);
 elements.configEditor.addEventListener("scroll", syncConfigHighlightScroll);
 elements.sessionToggle.addEventListener("click", toggleSession);
 elements.systemProxyToggle.addEventListener("click", toggleSystemProxy);
+elements.tunToggle.addEventListener("click", toggleTUN);
 elements.routingMode.addEventListener("change", changeRoutingMode);
 elements.authForm.addEventListener("submit", event => { event.preventDefault(); submitAuth(); });
 elements.authImage.addEventListener("click", addGraphPoint);
@@ -82,6 +88,7 @@ async function initialize() {
     const bootstrap = await webui("/bootstrap");
     state.managed = Boolean(bootstrap.managed);
     if (state.managed) {
+      state.tunAvailable = Boolean(bootstrap.tun_available);
       state.token = bootstrap.token;
       sessionStorage.setItem(TOKEN_KEY, state.token);
       sessionStorage.removeItem(LEGACY_TOKEN_KEY);
@@ -93,7 +100,7 @@ async function initialize() {
       await loadManagedConfigEditor();
       state.runtimeTimer = setInterval(async () => {
         const runtime = await loadRuntime();
-        if (runtime?.running && !state.connected) connectManagedCore();
+        if (runtime?.running && !state.connected && !state.coreRestarting) connectManagedCore();
       }, 3000);
       await connectManagedCore();
       return;
@@ -213,7 +220,7 @@ async function webui(path, options = {}) {
   const headers = new Headers(options.headers || {});
   if (state.token) headers.set("Authorization", `Bearer ${state.token}`);
   if (options.body && !headers.has("Content-Type")) headers.set("Content-Type", "application/json");
-  const response = await fetch(`/webui${path}`, { ...options, headers });
+  const response = await fetch(`/webui${path}`, { cache: "no-store", ...options, headers });
   const payload = await response.json();
   if (!response.ok) throw new Error(payload?.error?.message || `WebUI 请求失败 (${response.status})`);
   return payload.result;
@@ -302,7 +309,7 @@ async function api(path, options = {}) {
   const headers = new Headers(options.headers || {});
   if (state.token) headers.set("Authorization", `Bearer ${state.token}`);
   if (options.body && !headers.has("Content-Type")) headers.set("Content-Type", "application/json");
-  const response = await fetch(`${API}${path}`, { ...options, headers });
+  const response = await fetch(`${API}${path}`, { cache: "no-store", ...options, headers });
   const contentType = response.headers.get("content-type") || "";
   const payload = contentType.includes("application/json") ? await response.json() : null;
   if (!response.ok) {
@@ -321,6 +328,7 @@ function setConnected(connected) {
   elements.connectionDot.classList.toggle("online", connected);
   elements.connectionText.textContent = connected ? "已连接 Core" : "未连接 Core";
   if (!connected) elements.coreVersion.textContent = "连接已断开";
+  updateTUNToggle();
 }
 
 async function loadConfig(refreshEditor = true) {
@@ -344,8 +352,53 @@ function updateConfigSnapshot(snapshot) {
   elements.serverAddress.textContent = `${active.atrust?.server || "—"}:${active.atrust?.port || "—"}`;
   elements.username.textContent = active.atrust?.username || "—";
   elements.routingMode.value = active.routing?.mode || "rule";
+  state.tunConfiguredEnabled = Boolean(state.config?.inbounds?.tun?.enabled);
+  state.tunActiveEnabled = Boolean(active.inbounds?.tun?.enabled);
   renderConfigLifecycle();
   updateSystemProxyToggle();
+  updateTUNToggle();
+}
+
+function updateTUNToggle() {
+  elements.tunToggle.hidden = !state.managed;
+  elements.tunToggle.setAttribute("aria-checked", String(state.tunConfiguredEnabled));
+  elements.tunToggleLabel.textContent = state.tunBusy ? "处理中" : "TUN 模式";
+  elements.tunToggle.disabled = state.tunBusy || !state.connected || !state.tunAvailable;
+  if (!state.tunAvailable) {
+    elements.tunToggle.title = "TUN 需要以 root/管理员权限启动 Sumire";
+    return;
+  }
+  if (state.tunConfiguredEnabled !== state.tunActiveEnabled) {
+    elements.tunToggle.title = `TUN 已${state.tunConfiguredEnabled ? "启用" : "关闭"}，重启 Core 后生效`;
+  } else {
+    elements.tunToggle.title = state.tunConfiguredEnabled
+      ? "关闭 TUN；保存后需要重启 Core"
+      : "启用 TUN；需要 Sumire 已具有 root/管理员权限";
+  }
+}
+
+async function toggleTUN() {
+  if (!state.managed || state.tunBusy) return;
+  const enabled = !state.tunConfiguredEnabled;
+  state.tunBusy = true;
+  updateTUNToggle();
+  try {
+    const snapshot = await webui("/tun", { method: "PUT", body: JSON.stringify({ enabled }) });
+    const applied = Boolean(snapshot?.configured?.inbounds?.tun?.enabled);
+    if (applied !== enabled) throw new Error(`TUN 配置写入失败：期望 ${enabled ? "开启" : "关闭"}，Core 返回 ${applied ? "开启" : "关闭"}`);
+    updateConfigSnapshot(snapshot);
+    await loadConfig();
+    const restarted = await restartManagedCore({
+      confirmRestart: false,
+      successMessage: `TUN 已${enabled ? "启用" : "关闭"}并应用`,
+    });
+    if (!restarted) return;
+  } catch (error) {
+    toast(error.message, true);
+  } finally {
+    state.tunBusy = false;
+    updateTUNToggle();
+  }
 }
 
 function renderConfigLifecycle() {
@@ -415,7 +468,7 @@ function syncConfigHighlightScroll() {
 
 async function loadManagedConfigEditor() {
   if (!state.managed) return;
-  const response = await fetch("/webui/config");
+  const response = await fetch("/webui/config", { cache: "no-store" });
   if (!response.ok) throw new Error(`读取 YAML 配置失败 (${response.status})`);
   elements.configEditor.value = await response.text();
   elements.configTitle.textContent = "磁盘配置（YAML）";
@@ -471,18 +524,50 @@ async function applySessionConfig() {
   finally { elements.applySessionConfigButton.disabled = false; }
 }
 
-async function restartManagedCore() {
-  if (!state.managed || !window.confirm("重启 Core 会暂时中断当前连接，是否继续？")) return;
+async function restartManagedCore({ confirmRestart = true, successMessage = "Core 已重启，新配置已生效" } = {}) {
+  if (!state.managed || (confirmRestart && !window.confirm("重启 Core 会暂时中断当前连接，是否继续？"))) return false;
   elements.restartCoreButton.disabled = true;
+  state.coreRestarting = true;
   try {
     if (state.systemProxyEnabled) await configureSystemProxy(false, false);
-    await webui("/restart", { method: "POST" });
+    const previousRuntime = await webui("/runtime");
+    if (state.eventSource) {
+      state.eventSource.close();
+      state.eventSource = null;
+    }
+    stopPolling();
     setConnected(false);
     renderSessionStatus("stopped", { message: "Core 正在重启" });
-    if (!await connectManagedCore()) throw new Error("Core 重启后暂时无法连接");
-    toast("Core 已重启，新配置已生效");
-  } catch (error) { toast(error.message, true); }
-  finally { elements.restartCoreButton.disabled = false; }
+    toast("正在重启 Core…");
+    const restartedRuntime = await webui("/restart", { method: "POST" });
+    if (previousRuntime?.pid && restartedRuntime?.pid && previousRuntime.pid === restartedRuntime.pid) {
+      throw new Error(`Core PID 未变化，重启未完成 (${restartedRuntime.pid})`);
+    }
+    let connected = false;
+    for (let attempt = 0; attempt < 20; attempt++) {
+      if (await connect(true)) {
+        connected = true;
+        break;
+      }
+      await delay(500);
+    }
+    if (!connected) throw new Error("Core 重启后暂时无法连接");
+    await loadConfig();
+    const corePending = (state.configSnapshot?.pending || []).filter(change => change.requires === "core_restart");
+    if (corePending.length > 0) {
+      throw new Error(`Core 已更换进程，但仍有未应用配置：${corePending.map(change => change.path).join("、")}`);
+    }
+    toast(`${successMessage}${restartedRuntime?.pid ? ` (PID ${restartedRuntime.pid})` : ""}`);
+    return true;
+  } catch (error) {
+    toast(error.message, true);
+    return false;
+  }
+  finally {
+    state.coreRestarting = false;
+    elements.restartCoreButton.disabled = false;
+    if (!state.connected) connectManagedCore();
+  }
 }
 
 async function startSession() {
@@ -535,9 +620,12 @@ function setSessionToggleBusy(busy) {
 
 function updateSessionToggle() {
   const running = isSessionRunning(state.sessionState);
-  elements.sessionToggle.setAttribute("aria-checked", String(running));
+  const label = state.sessionToggleBusy ? "会话处理中" : running ? "停止会话" : "启动会话";
+  elements.sessionToggle.setAttribute("aria-pressed", String(running));
+  elements.sessionToggle.dataset.busy = String(state.sessionToggleBusy);
+  elements.sessionToggle.setAttribute("aria-label", label);
+  elements.sessionToggle.title = label;
   elements.sessionToggle.disabled = state.sessionToggleBusy || state.sessionState === "stopping";
-  elements.sessionToggleLabel.textContent = state.sessionToggleBusy ? "处理中" : running ? "停止会话" : "启动会话";
 }
 
 async function changeRoutingMode() {
@@ -852,6 +940,13 @@ function startPolling() {
   clearInterval(state.trafficTimer); clearInterval(state.statusTimer);
   state.trafficTimer = setInterval(loadTraffic, 2000);
   state.statusTimer = setInterval(loadSessionStatus, 8000);
+}
+
+function stopPolling() {
+  clearInterval(state.trafficTimer);
+  clearInterval(state.statusTimer);
+  state.trafficTimer = null;
+  state.statusTimer = null;
 }
 
 function startConnectionsPolling() {

@@ -56,6 +56,14 @@ main { width: min(1320px, 100%); padding: 26px 38px 36px; }
 .session-toggle-knob { position: absolute; top: 3px; left: 3px; width: 18px; height: 18px; border-radius: 50%; background: #799087; box-shadow: 0 2px 5px rgba(0, 0, 0, .45); transition: transform .2s cubic-bezier(.2, .8, .2, 1), background .2s ease; }
 .session-toggle[aria-checked="true"] .session-toggle-track { border-color: var(--green-2); background: rgba(31, 201, 125, .25); }
 .session-toggle[aria-checked="true"] .session-toggle-knob { background: var(--green); transform: translateX(18px); box-shadow: 0 0 10px rgba(85, 230, 165, .45); }
+.session-power-button { width: 48px; height: 48px; padding: 0; display: inline-grid; place-items: center; color: #80958d; border: 1px solid #29443d; border-radius: 10px; background: linear-gradient(#142720, #0b1915); box-shadow: 0 5px 0 #050d0a, 0 8px 18px rgba(0, 0, 0, .28); transition: transform .1s ease, box-shadow .1s ease, color .18s ease, border-color .18s ease, background .18s ease; }
+.session-power-button:hover { color: #b9cec6; border-color: #42685c; }
+.session-power-button:active { transform: translateY(4px); box-shadow: 0 1px 0 #050d0a, inset 0 2px 6px rgba(0, 0, 0, .42); }
+.session-power-button[aria-pressed="true"] { color: #061d14; border-color: #75f0b7; background: linear-gradient(#70efb5, #32bd83); box-shadow: 0 5px 0 #11633f, 0 0 20px rgba(85, 230, 165, .26); }
+.session-power-button[aria-pressed="true"]:active { box-shadow: 0 1px 0 #11633f, inset 0 2px 6px rgba(5, 51, 31, .32); }
+.session-power-button[data-busy="true"] { color: #241706; border-color: #ffc66e; background: linear-gradient(#ffd17f, #d99634); box-shadow: 0 2px 0 #704312, 0 0 16px rgba(255, 184, 77, .22); transform: translateY(3px); }
+.session-power-button:disabled { cursor: wait; opacity: .75; }
+.session-power-icon { font-size: 25px; line-height: 1; font-family: system-ui, sans-serif; font-weight: 800; transform: translateY(-1px); }
 select { padding: 0 34px 0 12px; }
 .view { display: none; }
 .view.active { display: block; animation: reveal .24s ease-out; }

@@ -56,9 +56,12 @@
               <span class="session-toggle-track"><span class="session-toggle-knob"></span></span>
               <span id="systemProxyToggleLabel">系统代理</span>
             </button>
-            <button id="sessionToggle" class="session-toggle" type="button" role="switch" aria-checked="false">
+            <button id="tunToggle" class="session-toggle" type="button" role="switch" aria-checked="false" hidden>
               <span class="session-toggle-track"><span class="session-toggle-knob"></span></span>
-              <span id="sessionToggleLabel">启动会话</span>
+              <span id="tunToggleLabel">TUN 模式</span>
+            </button>
+            <button id="sessionToggle" class="session-power-button" type="button" aria-pressed="false" aria-label="启动会话" title="启动会话">
+              <span class="session-power-icon" aria-hidden="true">⏻</span>
             </button>
           </div>
         </div>

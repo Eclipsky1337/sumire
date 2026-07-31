@@ -14,6 +14,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -89,7 +90,14 @@ func (supervisor *coreSupervisor) startLocked() error {
 	if err := supervisor.Prepare(); err != nil {
 		return err
 	}
-	command := exec.Command(supervisor.binary, "--config", supervisor.configFile)
+	tunEnabled, err := managedTUNEnabled(supervisor.configFile)
+	if err != nil {
+		return err
+	}
+	command, privileged, err := newManagedCoreCommand(supervisor.binary, supervisor.configFile, tunEnabled)
+	if err != nil {
+		return err
+	}
 	stdout := io.Writer(supervisor.logs.Writer("stdout"))
 	stderr := io.Writer(supervisor.logs.Writer("stderr"))
 	if supervisor.consoleLogs {
@@ -107,7 +115,11 @@ func (supervisor *coreSupervisor) startLocked() error {
 	supervisor.done = done
 	supervisor.startedAt = time.Now()
 	supervisor.lastError = ""
-	supervisor.logs.Append("system", fmt.Sprintf("Core started with PID %d", command.Process.Pid))
+	message := fmt.Sprintf("Core started with PID %d", command.Process.Pid)
+	if privileged {
+		message += " (privileged TUN mode)"
+	}
+	supervisor.logs.Append("system", message)
 	go supervisor.wait(command, done)
 	return nil
 }
@@ -183,10 +195,15 @@ func (supervisor *coreSupervisor) Stop(ctx context.Context) error {
 func (supervisor *coreSupervisor) Restart(ctx context.Context) error {
 	supervisor.applyMu.Lock()
 	defer supervisor.applyMu.Unlock()
+	supervisor.logs.Append("system", "Core restart requested by WebUI")
 	if err := supervisor.Stop(ctx); err != nil {
 		return err
 	}
-	return supervisor.Start()
+	if err := supervisor.Start(); err != nil {
+		return err
+	}
+	supervisor.logs.Append("system", "Core restart command completed")
+	return nil
 }
 
 func (supervisor *coreSupervisor) Status() runtimeStatus {
@@ -253,6 +270,14 @@ func (supervisor *coreSupervisor) UpdateRoutingMode(ctx context.Context, authori
 	if mode != "rule" && mode != "global" && mode != "direct" {
 		return http.StatusBadRequest, nil, nil, fmt.Errorf("invalid routing mode %q", mode)
 	}
+	return supervisor.updateYAMLScalar(ctx, authorization, []string{"routing", "mode"}, mode, "!!str")
+}
+
+func (supervisor *coreSupervisor) UpdateTUNEnabled(ctx context.Context, authorization string, enabled bool) (int, http.Header, []byte, error) {
+	return supervisor.updateYAMLScalar(ctx, authorization, []string{"inbounds", "tun", "enabled"}, strconv.FormatBool(enabled), "!!bool")
+}
+
+func (supervisor *coreSupervisor) updateYAMLScalar(ctx context.Context, authorization string, path []string, value, tag string) (int, http.Header, []byte, error) {
 	supervisor.applyMu.Lock()
 	defer supervisor.applyMu.Unlock()
 	data, err := os.ReadFile(supervisor.configFile)
@@ -267,7 +292,7 @@ func (supervisor *coreSupervisor) UpdateRoutingMode(ctx context.Context, authori
 	if err := yaml.Unmarshal(normalizedYAML, &document); err != nil {
 		return http.StatusBadRequest, nil, nil, fmt.Errorf("decode managed configuration: %w", err)
 	}
-	if err := setYAMLScalar(&document, []string{"routing", "mode"}, mode, "!!str"); err != nil {
+	if err := setYAMLScalar(&document, path, value, tag); err != nil {
 		return http.StatusBadRequest, nil, nil, err
 	}
 	updatedYAML, err := yaml.Marshal(&document)
@@ -404,6 +429,24 @@ func normalizeYAMLConfigFile(path, resumeFile, tokenFile, coreListen string) err
 		return err
 	}
 	return atomicWriteFile(path, normalized, managedFileMode)
+}
+
+func managedTUNEnabled(path string) (bool, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return false, fmt.Errorf("read managed configuration for TUN: %w", err)
+	}
+	var config struct {
+		Inbounds struct {
+			TUN struct {
+				Enabled bool `yaml:"enabled"`
+			} `yaml:"tun"`
+		} `yaml:"inbounds"`
+	}
+	if err := yaml.Unmarshal(data, &config); err != nil {
+		return false, fmt.Errorf("decode managed TUN configuration: %w", err)
+	}
+	return config.Inbounds.TUN.Enabled, nil
 }
 
 func normalizeYAMLConfig(data []byte, resumeFile, tokenFile, coreListen string) ([]byte, error) {

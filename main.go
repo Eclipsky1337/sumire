@@ -31,49 +31,105 @@ var webFiles embed.FS
 //go:embed default-config.yaml
 var defaultConfig []byte
 
+type cliOptions struct {
+	listen         string
+	coreAddress    string
+	coreBinary     string
+	externalCore   bool
+	dataDirectory  string
+	configFile     string
+	resumeFile     string
+	coreListen     string
+	coreLogConsole bool
+}
+
+func parseCLIOptions(args []string) (cliOptions, error) {
+	options := cliOptions{listen: "127.0.0.1:9080", coreAddress: "http://127.0.0.1:9090", coreListen: "127.0.0.1:9090"}
+	if len(args) > 0 && args[0] == "external" {
+		options.externalCore = true
+		args = args[1:]
+	}
+	flags := flag.NewFlagSet("sumire", flag.ContinueOnError)
+	flags.SetOutput(os.Stderr)
+	flags.StringVar(&options.listen, "listen", options.listen, "WebUI listen address")
+	flags.StringVar(&options.coreBinary, "core-binary", "", "managed Core executable (default: next to WebUI)")
+	flags.StringVar(&options.dataDirectory, "data-dir", "", "managed Core data directory (default: next to WebUI)")
+	flags.StringVar(&options.configFile, "config", "", "managed Core configuration file (default: <data-dir>/config.yaml)")
+	flags.StringVar(&options.resumeFile, "resume-state", "", "managed Core Resume State file (default: <data-dir>/resume-state.json)")
+	flags.StringVar(&options.coreListen, "core-listen", options.coreListen, "managed Core REST listen address")
+	flags.BoolVar(&options.coreLogConsole, "core-log-console", false, "mirror managed Core stdout/stderr to the terminal")
+	flags.Usage = func() {
+		fmt.Fprintln(flags.Output(), "Usage:")
+		fmt.Fprintln(flags.Output(), "  sumire [options]")
+		fmt.Fprintln(flags.Output(), "  sumire external [options] [core-address]")
+		fmt.Fprintln(flags.Output())
+		flags.PrintDefaults()
+	}
+	if err := flags.Parse(args); err != nil {
+		return cliOptions{}, err
+	}
+	positional := flags.Args()
+	if len(positional) > 0 {
+		if !options.externalCore {
+			return cliOptions{}, fmt.Errorf("unexpected argument %q; use 'sumire external [core-address]'", positional[0])
+		}
+		if len(positional) > 1 {
+			return cliOptions{}, fmt.Errorf("too many arguments for external mode")
+		}
+		options.coreAddress = positional[0]
+	}
+	options.coreAddress = normalizeCoreAddress(options.coreAddress)
+	return options, nil
+}
+
+func normalizeCoreAddress(address string) string {
+	address = strings.TrimSpace(address)
+	if address != "" && !strings.Contains(address, "://") {
+		return "http://" + address
+	}
+	return address
+}
+
 func main() {
-	listen := flag.String("listen", "127.0.0.1:9080", "WebUI listen address")
-	coreAddress := flag.String("core", "http://127.0.0.1:9090", "ZJU Portal Core REST address")
-	coreBinary := flag.String("core-binary", "", "managed Core executable (default: next to WebUI)")
-	externalCore := flag.Bool("external-core", false, "use an externally managed Core")
-	dataDirectory := flag.String("data-dir", "", "managed Core data directory (default: next to WebUI)")
-	configFile := flag.String("config", "", "managed Core configuration file (default: <data-dir>/config.yaml)")
-	resumeFile := flag.String("resume-state", "", "managed Core Resume State file (default: <data-dir>/resume-state.json)")
-	coreListen := flag.String("core-listen", "127.0.0.1:9090", "managed Core REST listen address")
-	coreLogConsole := flag.Bool("core-log-console", false, "mirror managed Core stdout/stderr to the terminal")
-	flag.Parse()
+	options, err := parseCLIOptions(os.Args[1:])
+	if errors.Is(err, flag.ErrHelp) {
+		return
+	}
+	if err != nil {
+		log.Fatal(err)
+	}
 
 	executablePath, err := os.Executable()
 	if err != nil {
 		log.Fatalf("resolve WebUI executable: %v", err)
 	}
-	resolvedCoreBinary, managed, err := resolveCoreBinary(*coreBinary, *externalCore, executablePath, runtime.GOOS)
+	resolvedCoreBinary, managed, err := resolveCoreBinary(options.coreBinary, options.externalCore, executablePath, runtime.GOOS)
 	if err != nil {
 		log.Fatal(err)
 	}
-	if !managed && !*externalCore {
-		log.Printf("bundled Core was not found; using external Core at %s", *coreAddress)
+	if !managed && !options.externalCore {
+		log.Printf("bundled Core was not found; using external Core at %s", options.coreAddress)
 	}
 
 	var supervisor *coreSupervisor
 	if managed {
-		if !isLoopbackListen(*listen) {
-			log.Fatal("managed mode requires -listen to use a loopback address")
+		if warning := managedListenWarning(options.listen); warning != "" {
+			log.Print(warning)
 		}
-		if *dataDirectory == "" {
-			*dataDirectory = filepath.Join(filepath.Dir(executablePath), "data")
+		if options.dataDirectory == "" {
+			options.dataDirectory = filepath.Join(filepath.Dir(executablePath), "data")
 		}
-		managedPaths, err := resolveManagedPaths(*dataDirectory, *configFile, *resumeFile)
+		managedPaths, err := resolveManagedPaths(options.dataDirectory, options.configFile, options.resumeFile)
 		if err != nil {
 			log.Fatal(err)
 		}
-		*coreAddress = "http://" + *coreListen
-		target, parseErr := url.Parse(*coreAddress)
+		options.coreAddress = "http://" + options.coreListen
+		target, parseErr := url.Parse(options.coreAddress)
 		if parseErr != nil {
 			log.Fatal(parseErr)
 		}
-		supervisor = newCoreSupervisor(resolvedCoreBinary, managedPaths.config, managedPaths.resume, managedPaths.token, *coreListen, target)
-		supervisor.SetConsoleLogging(*coreLogConsole)
+		supervisor = newCoreSupervisor(resolvedCoreBinary, managedPaths.config, managedPaths.resume, managedPaths.token, options.coreListen, target)
+		supervisor.SetConsoleLogging(options.coreLogConsole)
 		if err := supervisor.Prepare(); err != nil {
 			log.Fatal(err)
 		}
@@ -82,9 +138,9 @@ func main() {
 		}
 	}
 
-	target, err := url.Parse(*coreAddress)
+	target, err := url.Parse(options.coreAddress)
 	if err != nil || (target.Scheme != "http" && target.Scheme != "https") || target.Host == "" {
-		fmt.Fprintf(os.Stderr, "invalid -core address %q\n", *coreAddress)
+		fmt.Fprintf(os.Stderr, "invalid Core address %q\n", options.coreAddress)
 		os.Exit(2)
 	}
 
@@ -96,7 +152,7 @@ func main() {
 	handler := newHandler(target, assets, supervisor, systemProxy)
 
 	server := &http.Server{
-		Addr:              *listen,
+		Addr:              options.listen,
 		Handler:           handler,
 		ReadHeaderTimeout: 5 * time.Second,
 		IdleTimeout:       60 * time.Second,
@@ -111,7 +167,7 @@ func main() {
 		_ = server.Shutdown(shutdownCtx)
 	}()
 
-	log.Printf("Sumire listening on http://%s (managed: %t)", *listen, supervisor != nil)
+	log.Printf("Sumire listening on http://%s (managed: %t)", options.listen, supervisor != nil)
 	if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 		log.Fatal(err)
 	}
@@ -141,7 +197,9 @@ func newHandler(target *url.URL, assets fs.FS, supervisor *coreSupervisor, syste
 	}
 	proxy.FlushInterval = -1
 	proxy.ErrorHandler = func(writer http.ResponseWriter, request *http.Request, proxyErr error) {
-		log.Printf("proxy %s %s: %v", request.Method, request.URL.Path, proxyErr)
+		if shouldLogProxyError(supervisor, request, proxyErr) {
+			log.Printf("proxy %s %s: %v", request.Method, request.URL.Path, proxyErr)
+		}
 		http.Error(writer, "Core is unavailable", http.StatusBadGateway)
 	}
 
@@ -176,7 +234,7 @@ func newHandler(target *url.URL, assets fs.FS, supervisor *coreSupervisor, syste
 			writeWebError(writer, http.StatusInternalServerError, "MANAGED_TOKEN_UNAVAILABLE", err.Error())
 			return
 		}
-		writeWebJSON(writer, http.StatusOK, map[string]any{"result": map[string]any{"managed": true, "token": token}})
+		writeWebJSON(writer, http.StatusOK, map[string]any{"result": map[string]any{"managed": true, "token": token, "tun_available": tunPrivilegesAvailable()}})
 	})
 	mux.HandleFunc("/webui/config", func(writer http.ResponseWriter, request *http.Request) {
 		if supervisor == nil {
@@ -314,6 +372,41 @@ func newHandler(target *url.URL, assets fs.FS, supervisor *coreSupervisor, syste
 		}
 		writeUpstreamResponse(writer, status, headers, responseBody)
 	})
+	mux.HandleFunc("/webui/tun", func(writer http.ResponseWriter, request *http.Request) {
+		if request.Method != http.MethodPut {
+			methodNotAllowed(writer, http.MethodPut)
+			return
+		}
+		if supervisor == nil {
+			writeWebError(writer, http.StatusConflict, "CORE_NOT_MANAGED", "Core is not managed by WebUI")
+			return
+		}
+		var params struct {
+			Enabled bool `json:"enabled"`
+		}
+		request.Body = http.MaxBytesReader(writer, request.Body, 1<<20)
+		decoder := json.NewDecoder(request.Body)
+		decoder.DisallowUnknownFields()
+		if err := decoder.Decode(&params); err != nil {
+			writeWebError(writer, http.StatusBadRequest, "CONFIG_INVALID", err.Error())
+			return
+		}
+		if params.Enabled {
+			if err := validateTUNPrivileges(); err != nil {
+				writeWebError(writer, http.StatusForbidden, "TUN_PRIVILEGES_REQUIRED", err.Error())
+				return
+			}
+		}
+		status, headers, responseBody, err := supervisor.UpdateTUNEnabled(request.Context(), request.Header.Get("Authorization"), params.Enabled)
+		if err != nil {
+			if status == 0 {
+				status = http.StatusInternalServerError
+			}
+			writeWebError(writer, status, "CONFIG_APPLY_FAILED", err.Error())
+			return
+		}
+		writeUpstreamResponse(writer, status, headers, responseBody)
+	})
 	mux.HandleFunc("/webui/logs", func(writer http.ResponseWriter, request *http.Request) {
 		if request.Method != http.MethodGet {
 			methodNotAllowed(writer, http.MethodGet)
@@ -376,6 +469,10 @@ func newHandler(target *url.URL, assets fs.FS, supervisor *coreSupervisor, syste
 		_, _ = writer.Write(indexHTML)
 	})
 	return securityHeaders(mux)
+}
+
+func shouldLogProxyError(supervisor *coreSupervisor, request *http.Request, proxyErr error) bool {
+	return supervisor == nil || request.Method != http.MethodGet || request.URL.Path != "/api/v1/hello" || !errors.Is(proxyErr, syscall.ECONNREFUSED)
 }
 
 type managedPaths struct {
@@ -460,6 +557,13 @@ func isLoopbackListen(address string) bool {
 	return ip != nil && ip.IsLoopback()
 }
 
+func managedListenWarning(address string) string {
+	if isLoopbackListen(address) {
+		return ""
+	}
+	return fmt.Sprintf("WARNING: managed WebUI is listening on non-loopback address %s; remote clients can obtain the managed Core token and fully control the session", address)
+}
+
 func methodNotAllowed(writer http.ResponseWriter, methods ...string) {
 	writer.Header().Set("Allow", strings.Join(methods, ", "))
 	writeWebError(writer, http.StatusMethodNotAllowed, "METHOD_NOT_ALLOWED", "method not allowed")
@@ -489,6 +593,9 @@ func securityHeaders(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		writer.Header().Set("X-Content-Type-Options", "nosniff")
 		writer.Header().Set("X-Frame-Options", "DENY")
+		if strings.HasPrefix(request.URL.Path, "/api/") || strings.HasPrefix(request.URL.Path, "/webui/") {
+			writer.Header().Set("Cache-Control", "no-store")
+		}
 		writer.Header().Set("Referrer-Policy", "no-referrer")
 		writer.Header().Set("Content-Security-Policy", "default-src 'self'; img-src 'self' data:; style-src 'self'; script-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'")
 		next.ServeHTTP(writer, request)
