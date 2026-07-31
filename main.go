@@ -40,6 +40,7 @@ func main() {
 	configFile := flag.String("config", "", "managed Core configuration file (default: <data-dir>/config.yaml)")
 	resumeFile := flag.String("resume-state", "", "managed Core Resume State file (default: <data-dir>/resume-state.json)")
 	coreListen := flag.String("core-listen", "127.0.0.1:9090", "managed Core REST listen address")
+	coreLogConsole := flag.Bool("core-log-console", false, "mirror managed Core stdout/stderr to the terminal")
 	flag.Parse()
 
 	executablePath, err := os.Executable()
@@ -72,6 +73,7 @@ func main() {
 			log.Fatal(parseErr)
 		}
 		supervisor = newCoreSupervisor(resolvedCoreBinary, managedPaths.config, managedPaths.resume, managedPaths.token, *coreListen, target)
+		supervisor.SetConsoleLogging(*coreLogConsole)
 		if err := supervisor.Prepare(); err != nil {
 			log.Fatal(err)
 		}
@@ -90,7 +92,8 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	handler := newHandler(target, assets, supervisor)
+	systemProxy := newSystemProxyController()
+	handler := newHandler(target, assets, supervisor, systemProxy)
 
 	server := &http.Server{
 		Addr:              *listen,
@@ -108,10 +111,15 @@ func main() {
 		_ = server.Shutdown(shutdownCtx)
 	}()
 
-	log.Printf("Sumire listening on http://%s (Core: %s, managed: %t)", *listen, target, supervisor != nil)
+	log.Printf("Sumire listening on http://%s (managed: %t)", *listen, supervisor != nil)
 	if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 		log.Fatal(err)
 	}
+	proxyCtx, cancelProxy := context.WithTimeout(context.Background(), 8*time.Second)
+	if err := systemProxy.Close(proxyCtx); err != nil {
+		log.Printf("disable system proxy: %v", err)
+	}
+	cancelProxy()
 	if supervisor != nil {
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
 		defer cancel()
@@ -121,7 +129,7 @@ func main() {
 	}
 }
 
-func newHandler(target *url.URL, assets fs.FS, supervisor *coreSupervisor) http.Handler {
+func newHandler(target *url.URL, assets fs.FS, supervisor *coreSupervisor, systemProxy *systemProxyController) http.Handler {
 	indexHTML, indexErr := fs.ReadFile(assets, "index.html")
 	proxy := httputil.NewSingleHostReverseProxy(target)
 	originalDirector := proxy.Director
@@ -220,6 +228,62 @@ func newHandler(target *url.URL, assets fs.FS, supervisor *coreSupervisor) http.
 			return
 		}
 		writeWebJSON(writer, http.StatusOK, map[string]any{"result": supervisor.Status()})
+	})
+	mux.HandleFunc("/webui/system-proxy", func(writer http.ResponseWriter, request *http.Request) {
+		if supervisor == nil {
+			writeWebError(writer, http.StatusConflict, "CORE_NOT_MANAGED", "system proxy is only available in managed mode")
+			return
+		}
+		if !supervisor.Authorized(request.Header.Get("Authorization")) {
+			writeWebError(writer, http.StatusUnauthorized, "UNAUTHORIZED", "invalid managed Core token")
+			return
+		}
+		switch request.Method {
+		case http.MethodGet:
+			writeWebJSON(writer, http.StatusOK, map[string]any{"result": systemProxy.Status()})
+		case http.MethodPut:
+			var params struct {
+				Enabled      bool   `json:"enabled"`
+				HTTPAddress  string `json:"http_address"`
+				SOCKSAddress string `json:"socks_address"`
+			}
+			request.Body = http.MaxBytesReader(writer, request.Body, 1<<20)
+			decoder := json.NewDecoder(request.Body)
+			decoder.DisallowUnknownFields()
+			if err := decoder.Decode(&params); err != nil {
+				writeWebError(writer, http.StatusBadRequest, "SYSTEM_PROXY_INVALID", err.Error())
+				return
+			}
+			if params.Enabled {
+				if strings.TrimSpace(params.HTTPAddress) == "" && strings.TrimSpace(params.SOCKSAddress) == "" {
+					writeWebError(writer, http.StatusBadRequest, "SYSTEM_PROXY_INVALID", "at least one proxy address is required")
+					return
+				}
+				for label, address := range map[string]string{"HTTP": params.HTTPAddress, "SOCKS": params.SOCKSAddress} {
+					if strings.TrimSpace(address) == "" {
+						continue
+					}
+					if _, err := parseSystemProxyEndpoint(address); err != nil {
+						writeWebError(writer, http.StatusBadRequest, "SYSTEM_PROXY_INVALID", fmt.Sprintf("invalid %s proxy address: %v", label, err))
+						return
+					}
+				}
+			}
+			proxyCtx, cancel := context.WithTimeout(request.Context(), 15*time.Second)
+			defer cancel()
+			state, err := systemProxy.Configure(proxyCtx, params.Enabled, params.HTTPAddress, params.SOCKSAddress)
+			if err != nil {
+				status := http.StatusInternalServerError
+				if !state.Supported {
+					status = http.StatusNotImplemented
+				}
+				writeWebError(writer, status, "SYSTEM_PROXY_FAILED", err.Error())
+				return
+			}
+			writeWebJSON(writer, http.StatusOK, map[string]any{"result": state})
+		default:
+			methodNotAllowed(writer, http.MethodGet, http.MethodPut)
+		}
 	})
 	mux.HandleFunc("/webui/routing", func(writer http.ResponseWriter, request *http.Request) {
 		if request.Method != http.MethodPut {

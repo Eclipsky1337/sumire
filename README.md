@@ -13,6 +13,7 @@ Sumire 是 [zju-portal-core](https://github.com/Eclipsky1337/zju-portal-core) �
 
 - REST Token 连接与 Control Protocol v2 检查；
 - Session 启停、状态和路由模式切换；
+- Windows HTTP/HTTPS 与 macOS HTTP/HTTPS/SOCKS 系统代理开关；
 - configured/active 配置快照、待应用字段高亮与显式应用；
 - Session 配置显式应用，以及托管模式 Core 配置落盘和重启；
 - SSE 认证 challenge（密码、短信、TOTP、CAS/OAuth、图形验证码点击和认证方式选择）；
@@ -66,6 +67,10 @@ WebUI 会自动发现同目录的 `zju-portal-core`（Windows 为 `zju-portal-co
 - `data/resume-state.json`：Resume State；
 - `data/control.token`：REST Token；
 - `127.0.0.1:9090`：Core REST 地址。
+
+Windows 和 macOS 可在概览页面开启系统代理。Windows 使用当前 active 配置中的 HTTP 入站设置 HTTP/HTTPS 代理；macOS 还会同时使用 active SOCKS5 入站设置 SOCKS 代理。开启后每 5 秒检查一次系统设置，被其他软件修改时会自动重新应用。开启时会覆盖现有代理，关闭时直接清空，不恢复之前的代理设置。Linux 暂不提供此功能。
+
+Core 完整输出默认只显示在 WebUI 的 Core 日志页面。排查启动问题时，可以使用 `./sumire -core-log-console` 将 Core stdout/stderr 同步输出到终端。
 
 ### 外部模式
 

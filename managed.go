@@ -24,20 +24,21 @@ import (
 const managedFileMode = 0600
 
 type coreSupervisor struct {
-	mu         sync.Mutex
-	binary     string
-	configFile string
-	resumeFile string
-	tokenFile  string
-	coreListen string
-	coreURL    *url.URL
-	command    *exec.Cmd
-	done       chan struct{}
-	startedAt  time.Time
-	lastError  string
-	stopping   bool
-	logs       *coreLogBuffer
-	applyMu    sync.Mutex
+	mu          sync.Mutex
+	binary      string
+	configFile  string
+	resumeFile  string
+	tokenFile   string
+	coreListen  string
+	coreURL     *url.URL
+	command     *exec.Cmd
+	done        chan struct{}
+	startedAt   time.Time
+	lastError   string
+	stopping    bool
+	consoleLogs bool
+	logs        *coreLogBuffer
+	applyMu     sync.Mutex
 }
 
 type runtimeStatus struct {
@@ -56,6 +57,10 @@ func newCoreSupervisor(binary, configFile, resumeFile, tokenFile, coreListen str
 		binary: binary, configFile: configFile, resumeFile: resumeFile,
 		tokenFile: tokenFile, coreListen: coreListen, coreURL: coreURL, logs: newCoreLogBuffer(),
 	}
+}
+
+func (supervisor *coreSupervisor) SetConsoleLogging(enabled bool) {
+	supervisor.consoleLogs = enabled
 }
 
 func (supervisor *coreSupervisor) Prepare() error {
@@ -85,8 +90,14 @@ func (supervisor *coreSupervisor) startLocked() error {
 		return err
 	}
 	command := exec.Command(supervisor.binary, "--config", supervisor.configFile)
-	command.Stdout = io.MultiWriter(os.Stdout, supervisor.logs.Writer("stdout"))
-	command.Stderr = io.MultiWriter(os.Stderr, supervisor.logs.Writer("stderr"))
+	stdout := io.Writer(supervisor.logs.Writer("stdout"))
+	stderr := io.Writer(supervisor.logs.Writer("stderr"))
+	if supervisor.consoleLogs {
+		stdout = io.MultiWriter(os.Stdout, stdout)
+		stderr = io.MultiWriter(os.Stderr, stderr)
+	}
+	command.Stdout = stdout
+	command.Stderr = stderr
 	if err := command.Start(); err != nil {
 		supervisor.lastError = err.Error()
 		return fmt.Errorf("start Core: %w", err)
@@ -203,6 +214,11 @@ func (supervisor *coreSupervisor) Token() (string, error) {
 		return "", fmt.Errorf("read managed token: %w", err)
 	}
 	return string(bytes.TrimSpace(data)), nil
+}
+
+func (supervisor *coreSupervisor) Authorized(authorization string) bool {
+	token, err := supervisor.Token()
+	return err == nil && authorization == "Bearer "+token
 }
 
 func (supervisor *coreSupervisor) ApplyConfig(ctx context.Context, authorization string, body []byte) (int, http.Header, []byte, error) {

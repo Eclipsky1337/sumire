@@ -24,6 +24,10 @@ const state = {
   logsLoading: false,
   sessionState: "idle",
   sessionToggleBusy: false,
+  systemProxySupported: false,
+  systemProxySOCKSSupported: false,
+  systemProxyEnabled: false,
+  systemProxyBusy: false,
   speedHistory: { download: [], upload: [] },
   connections: [],
   selectedConnection: null,
@@ -55,6 +59,7 @@ elements.restartCoreButton.addEventListener("click", restartManagedCore);
 elements.configEditor.addEventListener("input", renderConfigHighlights);
 elements.configEditor.addEventListener("scroll", syncConfigHighlightScroll);
 elements.sessionToggle.addEventListener("click", toggleSession);
+elements.systemProxyToggle.addEventListener("click", toggleSystemProxy);
 elements.routingMode.addEventListener("change", changeRoutingMode);
 elements.authForm.addEventListener("submit", event => { event.preventDefault(); submitAuth(); });
 elements.authImage.addEventListener("click", addGraphPoint);
@@ -83,6 +88,7 @@ async function initialize() {
       localStorage.removeItem(LEGACY_TOKEN_KEY);
       elements.connectButton.hidden = true;
       elements.coreLogsNav.hidden = false;
+      await loadSystemProxyStatus();
       await loadRuntime();
       await loadManagedConfigEditor();
       state.runtimeTimer = setInterval(async () => {
@@ -225,6 +231,73 @@ async function loadRuntime() {
   } catch (error) { console.warn("load managed runtime", error); }
 }
 
+async function loadSystemProxyStatus() {
+  if (!state.managed) return;
+  try {
+    applySystemProxyState(await webui("/system-proxy"));
+  } catch (error) {
+    console.warn("load system proxy status", error);
+  }
+}
+
+function applySystemProxyState(proxyState) {
+  state.systemProxySupported = Boolean(proxyState?.supported);
+  state.systemProxySOCKSSupported = Boolean(proxyState?.socks_supported);
+  state.systemProxyEnabled = Boolean(proxyState?.enabled);
+  updateSystemProxyToggle();
+}
+
+function activeSystemProxyAddresses() {
+  const inbounds = state.configSnapshot?.active?.inbounds || {};
+  return {
+    http: inbounds.http?.enabled ? inbounds.http.listen || "" : "",
+    socks: state.systemProxySOCKSSupported && inbounds.socks5?.enabled ? inbounds.socks5.listen || "" : "",
+  };
+}
+
+function updateSystemProxyToggle() {
+  elements.systemProxyToggle.hidden = !state.managed || !state.systemProxySupported;
+  elements.systemProxyToggle.setAttribute("aria-checked", String(state.systemProxyEnabled));
+  elements.systemProxyToggleLabel.textContent = "系统代理";
+  const addresses = activeSystemProxyAddresses();
+  const enabledAddresses = [addresses.http && `HTTP ${addresses.http}`, addresses.socks && `SOCKS5 ${addresses.socks}`].filter(Boolean);
+  const canEnable = state.connected && state.sessionState === "ready" && enabledAddresses.length > 0;
+  elements.systemProxyToggle.disabled = state.systemProxyBusy || (!state.systemProxyEnabled && !canEnable);
+  elements.systemProxyToggle.title = state.systemProxyEnabled
+    ? "关闭系统代理和强制代理守卫"
+    : canEnable ? `覆盖系统代理并每 5 秒强制检查：${enabledAddresses.join("、")}` : "会话就绪且本地代理入站运行后可用";
+}
+
+async function configureSystemProxy(enabled, announce = true) {
+  state.systemProxyBusy = true;
+  updateSystemProxyToggle();
+  try {
+    const addresses = enabled ? activeSystemProxyAddresses() : { http: "", socks: "" };
+    if (enabled && (state.sessionState !== "ready" || (!addresses.http && !addresses.socks))) throw new Error("会话就绪且本地代理入站运行后才能启用系统代理");
+    const result = await webui("/system-proxy", {
+      method: "PUT",
+      body: JSON.stringify({ enabled, http_address: addresses.http, socks_address: addresses.socks }),
+    });
+    applySystemProxyState(result);
+    if (announce) {
+      const applied = [addresses.http && `HTTP ${addresses.http}`, addresses.socks && `SOCKS5 ${addresses.socks}`].filter(Boolean).join("、");
+      toast(enabled ? `系统代理已设置：${applied}` : "系统代理已关闭");
+    }
+  } finally {
+    state.systemProxyBusy = false;
+    updateSystemProxyToggle();
+  }
+}
+
+async function toggleSystemProxy() {
+  if (state.systemProxyBusy) return;
+  try {
+    await configureSystemProxy(!state.systemProxyEnabled);
+  } catch (error) {
+    toast(error.message, true);
+  }
+}
+
 async function api(path, options = {}) {
   const headers = new Headers(options.headers || {});
   if (state.token) headers.set("Authorization", `Bearer ${state.token}`);
@@ -272,6 +345,7 @@ function updateConfigSnapshot(snapshot) {
   elements.username.textContent = active.atrust?.username || "—";
   elements.routingMode.value = active.routing?.mode || "rule";
   renderConfigLifecycle();
+  updateSystemProxyToggle();
 }
 
 function renderConfigLifecycle() {
@@ -381,6 +455,7 @@ async function saveConfig() {
 async function applySessionConfig() {
   elements.applySessionConfigButton.disabled = true;
   try {
+    if (state.systemProxyEnabled) await configureSystemProxy(false, false);
     const snapshot = await api("/config/apply", { method: "POST", body: JSON.stringify({ mode: "restart-session" }) });
     updateConfigSnapshot(snapshot);
     await loadConfig();
@@ -400,6 +475,7 @@ async function restartManagedCore() {
   if (!state.managed || !window.confirm("重启 Core 会暂时中断当前连接，是否继续？")) return;
   elements.restartCoreButton.disabled = true;
   try {
+    if (state.systemProxyEnabled) await configureSystemProxy(false, false);
     await webui("/restart", { method: "POST" });
     setConnected(false);
     renderSessionStatus("stopped", { message: "Core 正在重启" });
@@ -434,6 +510,7 @@ async function startSession() {
 async function stopSession() {
   setSessionToggleBusy(true);
   try {
+    if (state.systemProxyEnabled) await configureSystemProxy(false, false);
     await api(`/sessions/${encodeURIComponent(state.sessionId)}`, { method: "DELETE" });
     toast("会话已停止");
     await loadSessionStatus();
@@ -507,6 +584,10 @@ function renderSessionStatus(sessionState, lastError) {
   else if (!["idle", "stopped"].includes(sessionState)) elements.sessionPulse.classList.add("working");
   elements.sessionHint.textContent = lastError?.message || (sessionState === "ready" ? "隧道与本地服务运行正常。" : "Core 正在等待操作或处理连接流程。");
   updateSessionToggle();
+  updateSystemProxyToggle();
+  if (state.systemProxyEnabled && !state.systemProxyBusy && ["idle", "stopped", "failed"].includes(state.sessionState)) {
+    configureSystemProxy(false, false).catch(error => toast(`关闭系统代理失败：${error.message}`, true));
+  }
 }
 
 async function loadTraffic() {

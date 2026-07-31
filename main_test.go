@@ -116,7 +116,7 @@ func TestHandlerServesUIAndProxiesAPI(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	handler := newHandler(target, assets, nil)
+	handler := newHandler(target, assets, nil, newSystemProxyController())
 
 	uiRecorder := httptest.NewRecorder()
 	handler.ServeHTTP(uiRecorder, httptest.NewRequest(http.MethodGet, "/", nil))
@@ -131,6 +131,49 @@ func TestHandlerServesUIAndProxiesAPI(t *testing.T) {
 	handler.ServeHTTP(apiRecorder, apiRequest)
 	if apiRecorder.Code != http.StatusOK || !strings.Contains(apiRecorder.Body.String(), `"protocol_version":2`) {
 		t.Fatalf("API response: status=%d body=%q", apiRecorder.Code, apiRecorder.Body.String())
+	}
+}
+
+func TestManagedSystemProxyEndpoint(t *testing.T) {
+	assets, err := fs.Sub(webFiles, "web")
+	if err != nil {
+		t.Fatal(err)
+	}
+	directory := t.TempDir()
+	tokenFile := filepath.Join(directory, "control.token")
+	if err := os.WriteFile(tokenFile, []byte("proxy-token\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	target, _ := url.Parse("http://core.invalid")
+	supervisor := newCoreSupervisor("unused", filepath.Join(directory, "config.yaml"), filepath.Join(directory, "resume.json"), tokenFile, "127.0.0.1:9090", target)
+	platform := &fakeSystemProxyPlatform{supported: true, supportsSOCKS: true}
+	controller := newSystemProxyControllerWithPlatform(platform)
+	handler := newHandler(target, assets, supervisor, controller)
+
+	unauthorized := httptest.NewRecorder()
+	handler.ServeHTTP(unauthorized, httptest.NewRequest(http.MethodGet, "/webui/system-proxy", nil))
+	if unauthorized.Code != http.StatusUnauthorized {
+		t.Fatalf("unauthorized status = %d", unauthorized.Code)
+	}
+
+	request := httptest.NewRequest(http.MethodPut, "/webui/system-proxy", strings.NewReader(`{"enabled":true,"http_address":"127.0.0.1:1081","socks_address":"127.0.0.1:1080"}`))
+	request.Header.Set("Authorization", "Bearer proxy-token")
+	request.Header.Set("Content-Type", "application/json")
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("enable status = %d, body = %s", recorder.Code, recorder.Body.String())
+	}
+	if platform.settings.HTTP == nil || platform.settings.HTTP.Address != "127.0.0.1:1081" || platform.settings.SOCKS == nil || platform.settings.SOCKS.Address != "127.0.0.1:1080" {
+		t.Fatalf("platform = %+v", platform)
+	}
+
+	request = httptest.NewRequest(http.MethodPut, "/webui/system-proxy", strings.NewReader(`{"enabled":false,"http_address":"","socks_address":""}`))
+	request.Header.Set("Authorization", "Bearer proxy-token")
+	recorder = httptest.NewRecorder()
+	handler.ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusOK || platform.disableCalls != 1 {
+		t.Fatalf("disable status = %d, calls = %d, body = %s", recorder.Code, platform.disableCalls, recorder.Body.String())
 	}
 }
 
