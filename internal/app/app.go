@@ -1,8 +1,11 @@
 package app
 
 import (
+	"bytes"
 	"context"
+	"crypto/rand"
 	"embed"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -30,6 +33,8 @@ var webFiles embed.FS
 
 //go:embed default-config.yaml
 var defaultConfig []byte
+
+type cspNonceContextKey struct{}
 
 type cliOptions struct {
 	listen         string
@@ -469,7 +474,8 @@ func newHandler(target *url.URL, assets fs.FS, supervisor *coreSupervisor, syste
 			return
 		}
 		writer.Header().Set("Content-Type", "text/html; charset=utf-8")
-		_, _ = writer.Write(indexHTML)
+		nonce, _ := request.Context().Value(cspNonceContextKey{}).(string)
+		_, _ = writer.Write(bytes.ReplaceAll(indexHTML, []byte("{{CSP_NONCE}}"), []byte(nonce)))
 	})
 	return securityHeaders(mux)
 }
@@ -594,13 +600,19 @@ func writeUpstreamResponse(writer http.ResponseWriter, status int, headers http.
 
 func securityHeaders(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		nonceBytes := make([]byte, 18)
+		if _, err := rand.Read(nonceBytes); err != nil {
+			http.Error(writer, "generate content security policy nonce", http.StatusInternalServerError)
+			return
+		}
+		nonce := base64.RawStdEncoding.EncodeToString(nonceBytes)
 		writer.Header().Set("X-Content-Type-Options", "nosniff")
 		writer.Header().Set("X-Frame-Options", "DENY")
 		if strings.HasPrefix(request.URL.Path, "/api/") || strings.HasPrefix(request.URL.Path, "/webui/") {
 			writer.Header().Set("Cache-Control", "no-store")
 		}
 		writer.Header().Set("Referrer-Policy", "no-referrer")
-		writer.Header().Set("Content-Security-Policy", "default-src 'self'; img-src 'self' data:; style-src 'self'; script-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'")
-		next.ServeHTTP(writer, request)
+		writer.Header().Set("Content-Security-Policy", fmt.Sprintf("default-src 'self'; img-src 'self' data:; style-src 'self' 'nonce-%s'; script-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'", nonce))
+		next.ServeHTTP(writer, request.WithContext(context.WithValue(request.Context(), cspNonceContextKey{}, nonce)))
 	})
 }

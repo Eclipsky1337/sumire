@@ -11,6 +11,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"strings"
 	"syscall"
@@ -179,6 +180,13 @@ func TestHandlerServesUIAndProxiesAPI(t *testing.T) {
 	if uiRecorder.Code != http.StatusOK || !strings.Contains(uiRecorder.Body.String(), "Sumire") {
 		t.Fatalf("UI response: status=%d body=%q", uiRecorder.Code, uiRecorder.Body.String())
 	}
+	match := regexp.MustCompile(`style-src 'self' 'nonce-([^']+)'`).FindStringSubmatch(uiRecorder.Header().Get("Content-Security-Policy"))
+	if len(match) != 2 || !strings.Contains(uiRecorder.Body.String(), `name="csp-nonce" content="`+match[1]+`"`) {
+		t.Fatalf("CSP nonce is not synchronized with the page: header=%q", uiRecorder.Header().Get("Content-Security-Policy"))
+	}
+	if strings.Contains(uiRecorder.Body.String(), "{{CSP_NONCE}}") {
+		t.Fatal("CSP nonce placeholder was not rendered")
+	}
 
 	apiRequest := httptest.NewRequest(http.MethodGet, "/api/v1/hello", nil)
 	apiRequest.Header.Set("Origin", "http://webui.invalid")
@@ -249,7 +257,7 @@ func TestManagedSystemProxyEndpoint(t *testing.T) {
 }
 
 func TestEmbeddedWebUIUsesControlProtocolV2(t *testing.T) {
-	data, err := webFiles.ReadFile("web/app.js")
+	data, err := os.ReadFile("_frontend/main.js")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -259,18 +267,19 @@ func TestEmbeddedWebUIUsesControlProtocolV2(t *testing.T) {
 		"snapshot?.configured",
 		`resume: "auto"`,
 		`/config/apply`,
+		"CORE_API_BASE",
 	} {
 		if !strings.Contains(script, expected) {
-			t.Fatalf("app.js does not contain %q", expected)
+			t.Fatalf("_frontend/main.js does not contain %q", expected)
 		}
 	}
 	if strings.Contains(script, "daemonToSessionConfig") || strings.Contains(script, `body: JSON.stringify({ config:`) {
-		t.Fatal("app.js still uses the legacy low-level session config")
+		t.Fatal("_frontend/main.js still uses the legacy low-level session config")
 	}
 }
 
 func TestEmbeddedWebUIUsesDiskBackedConfigLifecycle(t *testing.T) {
-	scriptData, err := webFiles.ReadFile("web/app.js")
+	scriptData, err := os.ReadFile("_frontend/main.js")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -279,6 +288,14 @@ func TestEmbeddedWebUIUsesDiskBackedConfigLifecycle(t *testing.T) {
 		t.Fatal(err)
 	}
 	styleData, err := webFiles.ReadFile("web/styles.css")
+	if err != nil {
+		t.Fatal(err)
+	}
+	editorData, err := os.ReadFile("_frontend/config-editor.js")
+	if err != nil {
+		t.Fatal(err)
+	}
+	bundleData, err := webFiles.ReadFile("web/app.js")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -295,17 +312,26 @@ func TestEmbeddedWebUIUsesDiskBackedConfigLifecycle(t *testing.T) {
 		`cache: "no-store"`,
 		"corePending.length > 0",
 		"Session 配置应用失败",
-		"config-editor-line-${change.requires}",
+		"configEditor.setPendingChanges",
 	} {
 		if !strings.Contains(script, expected) {
-			t.Fatalf("app.js does not contain %q", expected)
+			t.Fatalf("_frontend/main.js does not contain %q", expected)
 		}
 	}
 	if strings.Contains(script, "function reloadConfig") || strings.Contains(page, "reloadConfigButton") {
 		t.Fatal("manual config reload control is still exposed")
 	}
-	if !strings.Contains(page, `id="configHighlight"`) {
-		t.Fatal("config highlight layer is missing")
+	if !strings.Contains(page, `id="configEditor"`) || !strings.Contains(page, `src="/app.js"`) {
+		t.Fatal("CodeMirror editor mount or application bundle is missing")
+	}
+	if strings.Contains(page, `id="configHighlight"`) || strings.Contains(page, `<textarea id="configEditor"`) {
+		t.Fatal("legacy textarea editor is still exposed")
+	}
+	if !strings.Contains(string(editorData), "createConfigEditor") || !strings.Contains(string(editorData), "config-editor-line-") {
+		t.Fatal("CodeMirror source is missing expected editor features")
+	}
+	if len(bundleData) < 100_000 {
+		t.Fatal("embedded application bundle is unexpectedly small")
 	}
 	if !strings.Contains(page, `id="tunToggle"`) {
 		t.Fatal("TUN toggle is missing")

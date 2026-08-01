@@ -63,7 +63,19 @@ jobs:
         run: test -z "$(gofmt -l .)"
 
       - name: Check frontend syntax
-        run: node --check internal/app/web/app.js
+        run: |
+          node --check internal/app/_frontend/main.js
+          node --check internal/app/_frontend/client.js
+          node --check internal/app/_frontend/charts.js
+          node --check internal/app/_frontend/config-editor.js
+          node --check internal/app/_frontend/format.js
+          node --check internal/app/web/app.js
+
+      - name: Verify frontend bundle
+        run: |
+          npm ci --prefix internal/app/_frontend
+          npm run build --prefix internal/app/_frontend
+          git diff --exit-code -- internal/app/web/app.js
 
       - name: Run go vet
         run: go vet ./...

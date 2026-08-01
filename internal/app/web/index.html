@@ -4,6 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta name="color-scheme" content="dark">
+  <meta name="csp-nonce" content="{{CSP_NONCE}}">
   <title>Sumire</title>
   <link rel="stylesheet" href="/styles.css">
 </head>
@@ -131,8 +132,7 @@
             </div>
           </div>
           <div class="config-editor-shell">
-            <pre id="configHighlight" class="config-editor-highlight" aria-hidden="true"></pre>
-            <textarea id="configEditor" spellcheck="false" aria-label="配置编辑器"></textarea>
+            <div id="configEditor" aria-label="配置编辑器"></div>
           </div>
         </article>
       </section>

@@ -53,7 +53,10 @@ jobs:
             core/go.sum
 
       - name: Run Sumire tests
-        run: go test ./...
+        run: |
+          npm ci --prefix internal/app/_frontend
+          npm run build --prefix internal/app/_frontend
+          go test ./...
 
       - name: Build release archives
         shell: bash

@@ -121,16 +121,20 @@ select { padding: 0 34px 0 12px; }
 .config-change.core_restart { color: #ffb7bc; border-color: rgba(255, 111, 120, .3); background: rgba(255, 111, 120, .08); }
 .config-apply-row { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-top: 12px; }
 .config-apply-row p { margin: 0; }
-.config-editor-shell { position: relative; margin-top: 20px; }
-.config-editor-highlight, .config-editor-shell textarea { box-sizing: border-box; width: 100%; min-height: 590px; margin: 0; padding: 18px; white-space: pre; overflow: auto; tab-size: 2; border-radius: 11px; font: 13px/1.55 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
-.config-editor-highlight { position: absolute; inset: 0; z-index: 0; color: #c9f7df; pointer-events: none; border: 1px solid transparent; background: #071411; scrollbar-width: none; }
-.config-editor-highlight::-webkit-scrollbar { display: none; }
-.config-editor-line { display: block; min-width: max-content; padding: 0 4px; margin: 0 -4px; border-radius: 3px; }
-.config-editor-line-session_restart { background: rgba(255, 184, 77, .16); box-shadow: inset 3px 0 #ffb84d; }
-.config-editor-line-core_restart { background: rgba(255, 111, 120, .18); box-shadow: inset 3px 0 var(--red); }
-.config-editor-shell textarea { position: relative; z-index: 1; resize: vertical; color: transparent; caret-color: #c9f7df; -webkit-text-fill-color: transparent; border: 1px solid var(--line); outline: none; background: transparent; }
-.config-editor-shell textarea::selection { background: rgba(85, 230, 165, .28); }
-.config-editor-shell textarea:focus, input:focus, select:focus { border-color: var(--green-2); outline: 2px solid rgba(85, 230, 165, .1); }
+.config-editor-shell { margin-top: 20px; }
+.config-editor-shell .cm-editor { height: min(68vh, 760px); min-height: 590px; overflow: hidden; border: 1px solid var(--line); border-radius: 11px; background: #071411; font: 13px/1.55 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+.config-editor-shell .cm-editor.cm-focused { border-color: var(--green-2); outline: 2px solid rgba(85, 230, 165, .1); }
+.config-editor-shell .cm-scroller { overflow: auto; }
+.config-editor-shell .cm-content { padding: 16px 0; caret-color: #c9f7df; }
+.config-editor-shell .cm-line { padding: 0 18px; }
+.config-editor-shell .cm-gutters { border-right-color: rgba(78, 116, 104, .32); background: #091814; }
+.config-editor-shell .cm-activeLine, .config-editor-shell .cm-activeLineGutter { background: rgba(85, 230, 165, .06); }
+.config-editor-shell .cm-selectionBackground, .config-editor-shell .cm-content ::selection { background: rgba(85, 230, 165, .28) !important; }
+.config-editor-shell .cm-line.config-editor-line-session_restart { background: rgba(255, 184, 77, .16); box-shadow: inset 3px 0 #ffb84d; }
+.config-editor-shell .cm-line.config-editor-line-core_restart { background: rgba(255, 111, 120, .18); box-shadow: inset 3px 0 var(--red); }
+.config-editor-shell .cm-tooltip-lint { color: var(--text); border-color: var(--line); background: #10251f; }
+.config-editor-shell .cm-diagnostic-error { border-left-color: var(--red); }
+input:focus, select:focus { border-color: var(--green-2); outline: 2px solid rgba(85, 230, 165, .1); }
 .connection-grid { margin-top: 20px; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
 .connection-card { width: 100%; padding: 17px 18px; color: var(--text); text-align: left; border: 1px solid var(--line); border-radius: 12px; background: linear-gradient(145deg, rgba(14, 31, 27, .96), rgba(8, 21, 18, .96)); transition: transform .15s ease, border-color .15s ease, background .15s ease; }
 .connection-card:hover { border-color: #386357; background: linear-gradient(145deg, rgba(19, 42, 36, .98), rgba(9, 25, 21, .98)); transform: translateY(-2px); }
@@ -215,6 +219,7 @@ input { width: 100%; padding: 0 12px; }
   .topbar, .status-panel, .card-heading { align-items: stretch; flex-direction: column; }
   .top-actions, .session-actions, .row-actions { flex-wrap: wrap; }
   .config-apply-row { align-items: stretch; flex-direction: column; }
+  .config-editor-shell .cm-editor { height: 60vh; min-height: 440px; }
   .speed-summary { justify-content: space-between; }
   .speed-legends { flex: 1; justify-content: space-between; }
   .service-list { grid-template-columns: 1fr; }
