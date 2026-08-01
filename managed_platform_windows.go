@@ -1,4 +1,4 @@
-//go:build !windows
+//go:build windows
 
 package main
 
@@ -6,15 +6,17 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+
+	"golang.org/x/sys/windows"
 )
 
 func tunPrivilegesAvailable() bool {
-	return os.Geteuid() == 0
+	return windows.GetCurrentProcessToken().IsElevated()
 }
 
 func validateTUNPrivileges() error {
 	if !tunPrivilegesAvailable() {
-		return fmt.Errorf("TUN is enabled but Sumire is not running as root; restart with sudo ./sumire")
+		return fmt.Errorf("TUN is enabled but Sumire is not running as administrator")
 	}
 	return nil
 }
@@ -26,4 +28,12 @@ func newManagedCoreCommand(binary, configFile string, tunEnabled bool) (*exec.Cm
 		}
 	}
 	return exec.Command(binary, "--config", configFile), tunEnabled, nil
+}
+
+func applyManagedPathOwnership(string) error {
+	return nil
+}
+
+func applyManagedFileOwnership(*os.File, os.FileInfo) error {
+	return nil
 }

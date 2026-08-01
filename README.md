@@ -73,6 +73,8 @@ Windows 和 macOS 可在概览页面开启系统代理。Windows 使用当前 ac
 
 托管模式可在概览页面切换 TUN。单击开关后 Sumire 会写入 `data/config.yaml` 并自动重启 Core 应用配置。启用 TUN 时 Sumire 自身必须具有系统网络管理权限：macOS/Linux 使用 `sudo ./sumire` 启动，Windows 需要以管理员身份运行。配置已启用 TUN 但当前进程权限不足时，Sumire 会拒绝启动；普通权限运行时页面也不会允许开启 TUN。
 
+macOS/Linux 使用 `sudo` 启动时，Sumire 会根据 `SUDO_UID` 和 `SUDO_GID` 将托管目录、配置、Token 和 Core 停止后的 Resume State 保持为原登录用户所有，文件权限仍为 `0600`，数据目录权限仍为 `0700`。
+
 Core 完整输出默认只显示在 WebUI 的 Core 日志页面。排查启动问题时，可以使用 `./sumire -core-log-console` 将 Core stdout/stderr 同步输出到终端。
 
 托管模式允许监听非回环地址，例如：

@@ -182,6 +182,9 @@ func main() {
 		if err := supervisor.Stop(shutdownCtx); err != nil && !errors.Is(err, context.Canceled) {
 			log.Printf("stop managed Core: %v", err)
 		}
+		if err := supervisor.RestoreOwnership(); err != nil {
+			log.Printf("restore managed file ownership: %v", err)
+		}
 	}
 }
 

@@ -66,14 +66,21 @@ func (supervisor *coreSupervisor) SetConsoleLogging(enabled bool) {
 
 func (supervisor *coreSupervisor) Prepare() error {
 	for _, path := range []string{supervisor.configFile, supervisor.resumeFile, supervisor.tokenFile} {
-		if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
+		directory := filepath.Dir(path)
+		if err := os.MkdirAll(directory, 0700); err != nil {
 			return fmt.Errorf("create managed data directory: %w", err)
+		}
+		if err := applyManagedPathOwnership(directory); err != nil {
+			return fmt.Errorf("set managed data directory ownership: %w", err)
 		}
 	}
 	if err := ensureTokenFile(supervisor.tokenFile); err != nil {
 		return err
 	}
-	return normalizeYAMLConfigFile(supervisor.configFile, supervisor.resumeFile, supervisor.tokenFile, supervisor.coreListen)
+	if err := normalizeYAMLConfigFile(supervisor.configFile, supervisor.resumeFile, supervisor.tokenFile, supervisor.coreListen); err != nil {
+		return err
+	}
+	return supervisor.RestoreOwnership()
 }
 
 func (supervisor *coreSupervisor) Start() error {
@@ -86,6 +93,9 @@ func (supervisor *coreSupervisor) Start() error {
 func (supervisor *coreSupervisor) startLocked() error {
 	if supervisor.command != nil {
 		return nil
+	}
+	if err := supervisor.RestoreOwnership(); err != nil {
+		return err
 	}
 	if err := supervisor.Prepare(); err != nil {
 		return err
@@ -199,11 +209,30 @@ func (supervisor *coreSupervisor) Restart(ctx context.Context) error {
 	if err := supervisor.Stop(ctx); err != nil {
 		return err
 	}
+	if err := supervisor.RestoreOwnership(); err != nil {
+		return err
+	}
 	if err := supervisor.Start(); err != nil {
 		return err
 	}
 	supervisor.logs.Append("system", "Core restart command completed")
 	return nil
+}
+
+func (supervisor *coreSupervisor) RestoreOwnership() error {
+	paths := []string{
+		filepath.Dir(supervisor.configFile),
+		supervisor.configFile,
+		supervisor.resumeFile,
+		supervisor.tokenFile,
+	}
+	var ownershipErrors []error
+	for _, path := range paths {
+		if err := applyManagedPathOwnership(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+			ownershipErrors = append(ownershipErrors, fmt.Errorf("restore managed ownership for %s: %w", path, err))
+		}
+	}
+	return errors.Join(ownershipErrors...)
 }
 
 func (supervisor *coreSupervisor) Status() runtimeStatus {
@@ -406,7 +435,7 @@ func coreErrorCode(body []byte) string {
 
 func ensureTokenFile(path string) error {
 	if data, err := os.ReadFile(path); err == nil && len(bytes.TrimSpace(data)) > 0 {
-		return nil
+		return applyManagedPathOwnership(path)
 	} else if err != nil && !errors.Is(err, os.ErrNotExist) {
 		return fmt.Errorf("read managed token: %w", err)
 	}
@@ -573,9 +602,14 @@ func atomicWriteFile(path string, data []byte, defaultMode os.FileMode) error {
 	if err := os.MkdirAll(directory, 0700); err != nil {
 		return err
 	}
+	if err := applyManagedPathOwnership(directory); err != nil {
+		return err
+	}
 	mode := defaultMode
+	var existing os.FileInfo
 	if info, err := os.Stat(path); err == nil {
 		mode = info.Mode().Perm()
+		existing = info
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return err
 	}
@@ -586,6 +620,10 @@ func atomicWriteFile(path string, data []byte, defaultMode os.FileMode) error {
 	temporaryPath := temporary.Name()
 	defer os.Remove(temporaryPath)
 	if err := temporary.Chmod(mode); err != nil {
+		temporary.Close()
+		return err
+	}
+	if err := applyManagedFileOwnership(temporary, existing); err != nil {
 		temporary.Close()
 		return err
 	}
