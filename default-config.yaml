@@ -17,10 +17,11 @@ control:
     enabled: true
 
     # REST 监听地址
+    # 非回环监听使用明文 HTTP 和 Bearer Token，仅应在可信网络或防火墙保护下使用
     listen: 127.0.0.1:9090
 
-    # REST Bearer Token 留空且 secret-file 也为空时，启动时自动生成随机 Token
-    # secret 和 secret-file 互斥
+    # 指定 REST Token，和secret-file 互斥
+    # 留空且 secret-file 也为空时，启动时自动生成随机 Token并输出到stderr
     secret: ""
 
     # 从文件读取 REST Token
@@ -31,20 +32,18 @@ session:
   id: default
 
   # 启动 Core 时是否自动建立 aTrust Session
-  # 该字段只能通过修改配置文件并重启 Core 生效
   auto-start: false
 
   # VPN 网络后端异常或当前登录失效时是否自动重连
   # 注意 同一账号在其他设备登录时 自动重连可能再次顶掉另一台设备
-  # 需要主动切换设备或保留其他设备登录时建议设为 false
   auto-reconnect: true
 
 state:
-  # Resume State 持久化文件 留空表示不持久化
+  # 登录凭据持久化文件 留空表示不持久化
   resume-file: ""
 
 atrust:
-  # aTrust 网关域名或 IP session.auto-start 为 true 时不能为空
+  # aTrust 网关域名
   server: vpn.zju.edu.cn
 
   # aTrust 网关端口
@@ -69,8 +68,7 @@ atrust:
   # aTrust 登录域
   login-domain: Radius
 
-  # 后台重新探测各节点延迟并更新最佳节点的周期
-  # 设为 0s 可关闭周期更新，不能为负数
+  # 后台重新探测各节点延迟并更新最佳节点的周期，设为 0s 可关闭周期更新
   update-best-nodes-interval: 30s
 
 underlay:
@@ -90,6 +88,7 @@ routing:
 
   internet-outbound:
     # rule 模式下，未匹配 VPN 资源的流量出口 direct/socks5/reject
+    # 注意，socks5不能和TUN模式以及TUN.route-all=true同时使用，否则会导致流量回环
     type: direct
 
     # type 为 socks5 时必填
@@ -103,10 +102,10 @@ routing:
 
 dns:
   remote:
-    # 是否优先使用 VPN 内远程 DNS 解析
+    # 是否优先使用 VPN 的远程 DNS 解析
     enabled: true
 
-    # VPN 远程 DNS 地址 auto 表示从 aTrust 资源中读取服务端 DNS
+    # VPN 远程 DNS 地址， auto 表示从 aTrust 资源中读取服务端 DNS
     server: auto
 
   secondary:
@@ -116,7 +115,7 @@ dns:
   # DNS 缓存有效期
   cache-ttl: 1h
 
-  # 独立 DNS 服务监听地址
+  # DNS 服务监听地址
   listen: ""
 
   # 强制静态解析记录，优先级高于远程和备用 DNS
@@ -130,6 +129,7 @@ inbounds:
     enabled: true
 
     # SOCKS5 监听地址
+    # 非回环监听建议配置用户名和密码
     listen: 127.0.0.1:1080
 
     # SOCKS5 用户名

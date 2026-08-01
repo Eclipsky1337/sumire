@@ -13,13 +13,11 @@ Sumire 是 [zju-portal-core](https://github.com/Eclipsky1337/zju-portal-core) �
 
 - REST Token 连接与 Control Protocol v2 检查；
 - Session 启停、状态和路由模式切换；
-- Windows HTTP/HTTPS 与 macOS HTTP/HTTPS/SOCKS 系统代理开关；
+- Windows 与 macOS 系统代理开关；
 - 托管模式 TUN 快捷开关和启动权限检查；
-- configured/active 配置快照、待应用字段高亮与显式应用；
-- Session 配置显式应用，以及托管模式 Core 配置落盘和重启；
-- SSE 认证 challenge（密码、短信、TOTP、CAS/OAuth、图形验证码点击和认证方式选择）；
-- 流量、服务、逻辑连接和实时事件展示。
-- 托管 Core 的 stdout/stderr 实时日志查看。
+- 配置快照、待应用字段高亮与显式应用；
+- 图形化认证（密码、短信、TOTP、CAS/OAuth、图形验证码点击和认证方式选择）；
+- 流量、服务、逻辑连接和实时事件展示和 core 实时日志查看。
 
 ## Demo
 
@@ -29,12 +27,12 @@ Sumire 是 [zju-portal-core](https://github.com/Eclipsky1337/zju-portal-core) �
 
 ### 托管模式（推荐）
 
-Release 压缩包中将 WebUI 和 Core 放在同一目录：
+想从Release下载对应平台和架构的压缩包并解压，压缩包中结构如下：
 
 ```text
 sumire/
-├── sumire
-└── zju-portal-core
+├── sumire(.exe)
+└── zju-portal-core(.exe)
 ```
 
 MacOS需要先信任应用
@@ -50,40 +48,26 @@ xattr -d com.apple.quarantine zju-portal-core
 ./sumire
 ```
 
-在浏览器中访问显示的地址。在配置页面填写用户名和密码并保存后：
+终端会显示监听地址，在浏览器中访问显示的地址即可使用 WebUI
 
-- 页面提示“重启 Session”时，点击“重启 Session 应用”；
-- 页面提示“重启 Core”时，点击“重启 Core 应用”；
-- 配置生效后，在概览页面启动会话。
+在`配置`页面修改启动配置，默认配置推荐只修改username和password，点击主页启动即可，初次启动会进入认证流程
 
-> Note: 如果你不确定某项配置的含义，请不要随意修改配置文件
+> Note: 配置含义参照配置中注释，如果你不确定某项配置的含义，最好不要随意修改配置文件
 
-WebUI 会自动发现同目录的 `zju-portal-core`（Windows 为 `zju-portal-core.exe`），Core 随 WebUI 自动启动并在异常退出后自动重启。托管数据默认保存在 WebUI 同目录的 `data` 文件夹。
-
-每个 Sumire Release 会自动打包发布时最新的 `zju-portal-core` Release。
-
-托管模式默认使用：
+默认使用：
 
 - `data/config.yaml`：Core 配置；
 - `data/resume-state.json`：Resume State；
 - `data/control.token`：REST Token；
 - `127.0.0.1:9090`：Core REST 地址。
 
-Windows 和 macOS 可在概览页面开启系统代理。Windows 使用当前 active 配置中的 HTTP 入站设置 HTTP/HTTPS 代理；macOS 还会同时使用 active SOCKS5 入站设置 SOCKS 代理。开启后每 5 秒检查一次系统设置，被其他软件修改时会自动重新应用。开启时会覆盖现有代理，关闭时直接清空，不恢复之前的代理设置。Linux 暂不提供此功能。
-
-托管模式可在概览页面切换 TUN。单击开关后 Sumire 会写入 `data/config.yaml` 并自动重启 Core 应用配置。启用 TUN 时 Sumire 自身必须具有系统网络管理权限：macOS/Linux 使用 `sudo ./sumire` 启动，Windows 需要以管理员身份运行。配置已启用 TUN 但当前进程权限不足时，Sumire 会拒绝启动；普通权限运行时页面也不会允许开启 TUN。
-
-macOS/Linux 使用 `sudo` 启动时，Sumire 会根据 `SUDO_UID` 和 `SUDO_GID` 将托管目录、配置、Token 和 Core 停止后的 Resume State 保持为原登录用户所有，文件权限仍为 `0600`，数据目录权限仍为 `0700`。
-
-Core 完整输出默认只显示在 WebUI 的 Core 日志页面。排查启动问题时，可以使用 `./sumire -core-log-console` 将 Core stdout/stderr 同步输出到终端。
-
-托管模式允许监听非回环地址，例如：
+允许监听非回环地址，例如：
 
 ```bash
 ./sumire -listen :9080
 ```
 
-启动时会输出安全警告。任何能够访问该 WebUI 的客户端都可以取得托管 Core Token 并控制会话，因此只应在可信网络中使用。
+Core 完整输出默认只显示在 WebUI 的 Core 日志页面。排查启动问题时，可以使用 `./sumire -core-log-console` 将 Core stdout/stderr 同步输出到终端.
 
 ### 外部模式
 
