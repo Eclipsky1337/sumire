@@ -17,68 +17,52 @@ jobs:
   test:
     name: Test (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 20
+    timeout-minutes: 25
     strategy:
       fail-fast: false
       matrix:
         os:
-          - ubuntu-latest
-          - macos-latest
-          - windows-latest
+          - ubuntu-24.04
+          - macos-15
+          - windows-2025
     steps:
       - name: Check out repository
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
 
-      - name: Set up Go
-        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
-        with:
-          go-version-file: go.mod
-          cache: true
+      - name: Set up Rust
+        shell: bash
+        run: |
+          rustup toolchain install stable --profile minimal
+          rustup default stable
 
-      - name: Download dependencies
-        run: go mod download
+      - name: Verify frontend bundle
+        shell: bash
+        run: |
+          npm ci --prefix frontend
+          npm run check --prefix frontend
 
-      - name: Run tests
-        run: go test ./...
+      - name: Run Rust tests
+        run: cargo test --locked
 
-      - name: Build
-        run: go build -trimpath ./...
+      - name: Build release binary
+        run: cargo build --release --locked
 
   quality:
     name: Static analysis
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
       - name: Check out repository
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
 
-      - name: Set up Go
-        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
-        with:
-          go-version-file: go.mod
-          cache: true
+      - name: Set up Rust
+        shell: bash
+        run: |
+          rustup toolchain install stable --profile minimal --component clippy,rustfmt
+          rustup default stable
 
       - name: Check formatting
-        shell: bash
-        run: test -z "$(gofmt -l .)"
+        run: cargo fmt --all --check
 
-      - name: Check frontend syntax
-        run: |
-          node --check internal/app/_frontend/main.js
-          node --check internal/app/_frontend/client.js
-          node --check internal/app/_frontend/charts.js
-          node --check internal/app/_frontend/config-editor.js
-          node --check internal/app/_frontend/format.js
-          node --check internal/app/web/app.js
-
-      - name: Verify frontend bundle
-        run: |
-          npm ci --prefix internal/app/_frontend
-          npm run build --prefix internal/app/_frontend
-          git diff --exit-code -- internal/app/web/app.js
-
-      - name: Run go vet
-        run: go vet ./...
-
-      - name: Run race detector
-        run: go test -race ./...
+      - name: Run Clippy
+        run: cargo clippy --locked --all-targets -- -D warnings

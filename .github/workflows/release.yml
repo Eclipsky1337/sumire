@@ -1,6 +1,7 @@
 name: Release
 
 on:
+  workflow_dispatch:
   push:
     tags:
       - "v*"
@@ -13,15 +14,34 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  release:
-    name: Build and publish
-    runs-on: ubuntu-latest
-    timeout-minutes: 45
+  prepare:
+    name: Verify and resolve Core
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    outputs:
+      core-tag: ${{ steps.core-release.outputs.tag }}
     steps:
       - name: Check out Sumire
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           fetch-depth: 0
+
+      - name: Set up Rust
+        shell: bash
+        run: |
+          rustup toolchain install stable --profile minimal --component clippy,rustfmt
+          rustup default stable
+
+      - name: Verify frontend bundle
+        run: |
+          npm ci --prefix frontend
+          npm run check --prefix frontend
+
+      - name: Verify Rust sources
+        run: |
+          cargo fmt --all --check
+          cargo clippy --locked --all-targets -- -D warnings
+          cargo test --locked
 
       - name: Resolve Core release
         id: core-release
@@ -37,87 +57,130 @@ jobs:
           fi
           echo "tag=$core_tag" >> "$GITHUB_OUTPUT"
 
+  build:
+    name: Build (${{ matrix.goos }}/${{ matrix.goarch }})
+    needs: prepare
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 35
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-15-intel
+            goos: darwin
+            goarch: amd64
+            extension: ""
+          - runner: macos-15
+            goos: darwin
+            goarch: arm64
+            extension: ""
+          - runner: ubuntu-24.04
+            goos: linux
+            goarch: amd64
+            extension: ""
+          - runner: ubuntu-24.04-arm
+            goos: linux
+            goarch: arm64
+            extension: ""
+          - runner: windows-2025
+            goos: windows
+            goarch: amd64
+            extension: ".exe"
+          - runner: windows-11-arm
+            goos: windows
+            goarch: arm64
+            extension: ".exe"
+    steps:
+      - name: Check out Sumire
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+
       - name: Check out Core
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           repository: Eclipsky1337/zju-portal-core
-          ref: ${{ steps.core-release.outputs.tag }}
+          ref: ${{ needs.prepare.outputs.core-tag }}
           path: core
 
       - name: Set up Go
         uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
         with:
           go-version: "1.25.6"
-          cache-dependency-path: |
-            go.sum
-            core/go.sum
+          cache-dependency-path: core/go.sum
 
-      - name: Run Sumire tests
+      - name: Set up Rust
+        shell: bash
         run: |
-          npm ci --prefix internal/app/_frontend
-          npm run build --prefix internal/app/_frontend
-          go test ./...
+          rustup toolchain install stable --profile minimal
+          rustup default stable
 
-      - name: Build release archives
+      - name: Build package
         shell: bash
         env:
-          CORE_VERSION: ${{ steps.core-release.outputs.tag }}
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          EXTENSION: ${{ matrix.extension }}
         run: |
           set -euo pipefail
+          package_name="sumire_${GITHUB_REF_NAME}_${GOOS}_${GOARCH}"
+          package_dir="dist/${package_name}"
+          mkdir -p "$package_dir"
 
-          mkdir -p dist
+          cargo build --release --locked
+          cp "target/release/sumire${EXTENSION}" "${package_dir}/sumire${EXTENSION}"
+
           core_commit="$(git -C core rev-parse --short=7 HEAD)"
+          (
+            cd core
+            CGO_ENABLED=0 go build -trimpath -ldflags="-s -w -X main.CommitID=${core_commit}" \
+              -o "../${package_dir}/zju-portal-core${EXTENSION}" .
+          )
+          cp core/LICENSE "$package_dir/LICENSE.zju-portal-core"
 
-          build_target() {
-            local goos="$1"
-            local goarch="$2"
-            local extension="$3"
-            local package_name="sumire_${GITHUB_REF_NAME}_${goos}_${goarch}"
-            local package_dir="dist/${package_name}"
+          if [[ "$GOOS" == "windows" ]]; then
+            (cd dist && 7z a -tzip "${package_name}.zip" "./${package_name}/*")
+          else
+            tar -C dist -czf "dist/${package_name}.tar.gz" "$package_name"
+          fi
 
-            mkdir -p "$package_dir"
-            CGO_ENABLED=0 GOOS="$goos" GOARCH="$goarch" go build \
-              -trimpath \
-              -ldflags="-s -w" \
-              -o "${package_dir}/sumire${extension}" \
-              .
-            (
-              cd core
-              CGO_ENABLED=0 GOOS="$goos" GOARCH="$goarch" go build \
-                -trimpath \
-                -ldflags="-s -w -X main.CommitID=${core_commit}" \
-                -o "../${package_dir}/zju-portal-core${extension}" \
-                .
-            )
+      - name: Upload package
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: sumire-${{ matrix.goos }}-${{ matrix.goarch }}
+          path: |
+            dist/*.tar.gz
+            dist/*.zip
+          if-no-files-found: error
 
-            cp core/LICENSE "$package_dir/LICENSE.zju-portal-core"
+  publish:
+    name: Publish GitHub Release
+    if: github.event_name == 'push'
+    needs:
+      - prepare
+      - build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Check out Sumire
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          fetch-depth: 0
 
-            if [[ "$goos" == "windows" ]]; then
-              (cd dist && zip -qr "${package_name}.zip" "$package_name")
-            else
-              tar -C dist -czf "dist/${package_name}.tar.gz" "$package_name"
-            fi
-            rm -rf "$package_dir"
-          }
+      - name: Download packages
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          path: dist
+          merge-multiple: true
 
-          build_target darwin amd64 ""
-          build_target darwin arm64 ""
-          build_target linux amd64 ""
-          build_target linux arm64 ""
-          build_target windows amd64 ".exe"
-          build_target windows arm64 ".exe"
+      - name: Create checksums
+        run: cd dist && sha256sum ./*.tar.gz ./*.zip > checksums.txt
 
-          cd dist
-          sha256sum ./*.tar.gz ./*.zip > checksums.txt
-
-      - name: Publish GitHub Release
+      - name: Publish release
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
-          CORE_VERSION: ${{ steps.core-release.outputs.tag }}
+          CORE_VERSION: ${{ needs.prepare.outputs.core-tag }}
         run: |
           set -euo pipefail
-
           release_args=(
             --verify-tag
             --title "Sumire ${GITHUB_REF_NAME}"
@@ -127,5 +190,4 @@ jobs:
           if [[ "$GITHUB_REF_NAME" == *-* ]]; then
             release_args+=(--prerelease)
           fi
-
           gh release create "$GITHUB_REF_NAME" "${release_args[@]}" dist/*
