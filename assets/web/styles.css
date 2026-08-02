@@ -56,6 +56,12 @@ main { width: min(1320px, 100%); padding: 26px 38px 36px; }
 .session-toggle-knob { position: absolute; top: 3px; left: 3px; width: 18px; height: 18px; border-radius: 50%; background: #799087; box-shadow: 0 2px 5px rgba(0, 0, 0, .45); transition: transform .2s cubic-bezier(.2, .8, .2, 1), background .2s ease; }
 .session-toggle[aria-checked="true"] .session-toggle-track { border-color: var(--green-2); background: rgba(31, 201, 125, .25); }
 .session-toggle[aria-checked="true"] .session-toggle-knob { background: var(--green); transform: translateX(18px); box-shadow: 0 0 10px rgba(85, 230, 165, .45); }
+.terminal-proxy-button { width: 42px; height: 42px; padding: 0; display: inline-grid; place-items: center; color: #9fc8b9; border: 1px solid #29443d; border-radius: 10px; background: linear-gradient(#132720, #0c1c18); box-shadow: 0 4px 0 #06100d, 0 7px 16px rgba(0, 0, 0, .22); transition: transform .12s ease, box-shadow .12s ease, border-color .2s ease, color .2s ease; }
+.terminal-proxy-button span { font: 800 14px/1 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; transform: translateY(-1px); }
+.terminal-proxy-button:hover { color: var(--green); border-color: #3d6659; }
+.terminal-proxy-button:active { transform: translateY(3px); box-shadow: 0 1px 0 #06100d, inset 0 2px 5px rgba(0, 0, 0, .3); }
+.terminal-proxy-button:disabled { cursor: not-allowed; opacity: .5; transform: translateY(2px); box-shadow: 0 1px 0 #06100d; }
+.terminal-proxy-button[hidden] { display: none; }
 .session-power-button { width: 48px; height: 48px; padding: 0; display: inline-grid; place-items: center; color: #80958d; border: 1px solid #29443d; border-radius: 10px; background: linear-gradient(#142720, #0b1915); box-shadow: 0 5px 0 #050d0a, 0 8px 18px rgba(0, 0, 0, .28); transition: transform .1s ease, box-shadow .1s ease, color .18s ease, border-color .18s ease, background .18s ease; }
 .session-power-button:hover { color: #b9cec6; border-color: #42685c; }
 .session-power-button:active { transform: translateY(4px); box-shadow: 0 1px 0 #050d0a, inset 0 2px 6px rgba(0, 0, 0, .42); }

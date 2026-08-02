@@ -70,6 +70,7 @@ elements.applySessionConfigButton.addEventListener("click", applySessionConfig);
 elements.restartCoreButton.addEventListener("click", () => restartManagedCore());
 elements.sessionToggle.addEventListener("click", toggleSession);
 elements.systemProxyToggle.addEventListener("click", toggleSystemProxy);
+elements.copyTerminalProxyButton.addEventListener("click", copyTerminalProxyCommand);
 elements.tunToggle.addEventListener("click", toggleTUN);
 elements.routingMode.addEventListener("change", changeRoutingMode);
 elements.authForm.addEventListener("submit", event => { event.preventDefault(); submitAuth(); });
@@ -249,12 +250,17 @@ function applySystemProxyState(proxyState) {
   updateSystemProxyToggle();
 }
 
-function activeSystemProxyAddresses() {
+function activeProxyAddresses() {
   const inbounds = state.configSnapshot?.active?.inbounds || {};
   return {
     http: inbounds.http?.enabled ? inbounds.http.listen || "" : "",
-    socks: state.systemProxySOCKSSupported && inbounds.socks5?.enabled ? inbounds.socks5.listen || "" : "",
+    socks: inbounds.socks5?.enabled ? inbounds.socks5.listen || "" : "",
   };
+}
+
+function activeSystemProxyAddresses() {
+  const addresses = activeProxyAddresses();
+  return { http: addresses.http, socks: state.systemProxySOCKSSupported ? addresses.socks : "" };
 }
 
 function updateSystemProxyToggle() {
@@ -268,6 +274,68 @@ function updateSystemProxyToggle() {
   elements.systemProxyToggle.title = state.systemProxyEnabled
     ? "关闭系统代理和强制代理守卫"
     : canEnable ? `覆盖系统代理并每 5 秒强制检查：${enabledAddresses.join("、")}` : "会话就绪且本地代理入站运行后可用";
+  updateTerminalProxyButton();
+}
+
+function updateTerminalProxyButton() {
+  const command = terminalProxyCommand();
+  const available = state.connected && state.sessionState === "ready" && Boolean(command);
+  elements.copyTerminalProxyButton.hidden = !state.connected;
+  elements.copyTerminalProxyButton.disabled = !available;
+  elements.copyTerminalProxyButton.title = available ? `复制终端代理命令：${command}` : "会话就绪且本地代理入站运行后可用";
+}
+
+function terminalProxyCommand() {
+  const addresses = activeProxyAddresses();
+  const variables = [];
+  if (addresses.http) {
+    const proxy = `http://${localProxyAddress(addresses.http)}`;
+    variables.push(["http_proxy", proxy], ["https_proxy", proxy]);
+  }
+  if (addresses.socks) {
+    const proxy = `socks5h://${localProxyAddress(addresses.socks)}`;
+    variables.push(["all_proxy", proxy]);
+  }
+  return variables.length ? `export ${variables.map(([name, value]) => `${name}=${shellQuote(value)}`).join(" ")}` : "";
+}
+
+function localProxyAddress(address) {
+  const value = address.trim();
+  if (value.startsWith(":")) return `127.0.0.1${value}`;
+  if (value.startsWith("0.0.0.0:")) return `127.0.0.1:${value.slice("0.0.0.0:".length)}`;
+  if (value.startsWith("[::]:")) return `127.0.0.1:${value.slice("[::]:".length)}`;
+  return value;
+}
+
+function shellQuote(value) {
+  return `'${value.replaceAll("'", `'"'"'`)}'`;
+}
+
+async function copyTerminalProxyCommand() {
+  const command = terminalProxyCommand();
+  if (!command) return;
+  try {
+    await copyText(command);
+    toast("终端代理命令已复制");
+  } catch (error) {
+    toast(`复制失败：${error.message}`, true);
+  }
+}
+
+async function copyText(text) {
+  if (navigator.clipboard?.writeText && window.isSecureContext) {
+    await navigator.clipboard.writeText(text);
+    return;
+  }
+  const textarea = document.createElement("textarea");
+  textarea.value = text;
+  textarea.style.position = "fixed";
+  textarea.style.opacity = "0";
+  document.body.append(textarea);
+  textarea.select();
+  const copied = document.execCommand("copy");
+  textarea.remove();
+  if (!copied) throw new Error("浏览器不允许访问剪贴板");
 }
 
 async function configureSystemProxy(enabled, announce = true) {
@@ -305,6 +373,7 @@ function setConnected(connected) {
   elements.connectionDot.classList.toggle("online", connected);
   elements.connectionText.textContent = connected ? "已连接 Core" : "未连接 Core";
   if (!connected) elements.coreVersion.textContent = "连接已断开";
+  updateSystemProxyToggle();
   updateTUNToggle();
 }
 
