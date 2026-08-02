@@ -27,7 +27,7 @@ Sumire 是 [zju-portal-core](https://github.com/Eclipsky1337/zju-portal-core) �
 
 ### 托管模式（推荐）
 
-想从Release下载对应平台和架构的压缩包并解压，压缩包中结构如下：
+从Release下载对应平台和架构的压缩包并解压，压缩包中结构如下：
 
 ```text
 sumire/
