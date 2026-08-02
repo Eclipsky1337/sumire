@@ -69,32 +69,26 @@ jobs:
           - runner: macos-15-intel
             goos: darwin
             goarch: amd64
-            rust_target: ""
             extension: ""
           - runner: macos-15
             goos: darwin
             goarch: arm64
-            rust_target: ""
             extension: ""
           - runner: ubuntu-24.04
             goos: linux
             goarch: amd64
-            rust_target: x86_64-unknown-linux-musl
             extension: ""
           - runner: ubuntu-24.04-arm
             goos: linux
             goarch: arm64
-            rust_target: aarch64-unknown-linux-musl
             extension: ""
           - runner: windows-2025
             goos: windows
             goarch: amd64
-            rust_target: ""
             extension: ".exe"
           - runner: windows-11-arm
             goos: windows
             goarch: arm64
-            rust_target: ""
             extension: ".exe"
     steps:
       - name: Check out Sumire
@@ -115,25 +109,15 @@ jobs:
 
       - name: Set up Rust
         shell: bash
-        env:
-          RUST_TARGET: ${{ matrix.rust_target }}
         run: |
           rustup toolchain install stable --profile minimal
           rustup default stable
-          if [[ -n "$RUST_TARGET" ]]; then
-            rustup target add "$RUST_TARGET"
-          fi
-
-      - name: Install musl toolchain
-        if: matrix.goos == 'linux'
-        run: sudo apt-get update && sudo apt-get install --yes musl-tools
 
       - name: Build package
         shell: bash
         env:
           GOOS: ${{ matrix.goos }}
           GOARCH: ${{ matrix.goarch }}
-          RUST_TARGET: ${{ matrix.rust_target }}
           EXTENSION: ${{ matrix.extension }}
         run: |
           set -euo pipefail
@@ -141,18 +125,8 @@ jobs:
           package_dir="dist/${package_name}"
           mkdir -p "$package_dir"
 
-          if [[ -n "$RUST_TARGET" ]]; then
-            cargo build --release --locked --target "$RUST_TARGET"
-            sumire_binary="target/${RUST_TARGET}/release/sumire${EXTENSION}"
-          else
-            cargo build --release --locked
-            sumire_binary="target/release/sumire${EXTENSION}"
-          fi
-          if [[ "$GOOS" == "linux" ]] && readelf -l "$sumire_binary" | grep -q 'Requesting program interpreter'; then
-            echo "Linux Sumire binary is dynamically linked" >&2
-            exit 1
-          fi
-          cp "$sumire_binary" "${package_dir}/sumire${EXTENSION}"
+          cargo build --release --locked
+          cp "target/release/sumire${EXTENSION}" "${package_dir}/sumire${EXTENSION}"
 
           core_commit="$(git -C core rev-parse --short=7 HEAD)"
           (
